@@ -287,11 +287,24 @@ def _http_client():
     # trust_env=True (default) makes httpx respect HTTP_PROXY/HTTPS_PROXY/NO_PROXY
     # env vars automatically — important on corporate networks that require a
     # proxy for internet access, which plain urllib does NOT do by default.
-    return httpx.Client(
+    kwargs = dict(
         follow_redirects=True,
         timeout=httpx.Timeout(connect=20, read=180, write=30, pool=20),
         headers={"User-Agent": "AIMS-CoreDownloader/1.3"},
     )
+    try:
+        return httpx.Client(**kwargs)
+    except httpx.InvalidURL:
+        # httpx cannot parse bracketed IPv6 entries such as "[::1]" in NO_PROXY
+        # (it raises InvalidURL "Invalid port: ':1]'" while building the client,
+        # before any request is made) — so a machine with a perfectly valid
+        # NO_PROXY would fail every core download. Fall back to ignoring the
+        # env proxies; direct downloads still work where no proxy is required.
+        logger.warning(
+            "Proxy env vars could not be parsed by httpx (e.g. bracketed IPv6 "
+            "in NO_PROXY); downloading without env proxies."
+        )
+        return httpx.Client(trust_env=False, **kwargs)
 
 
 def _stream_one_attempt(url: str, tmp: Path, entry: dict[str, Any], progress_every: int) -> tuple[int, str]:
