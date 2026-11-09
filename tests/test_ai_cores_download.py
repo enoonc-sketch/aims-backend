@@ -163,3 +163,23 @@ def test_fetch_core_bytes_falls_back_to_mirror(monkeypatch, tmp_path):
         assert raw == content
     finally:
         server.shutdown()
+
+
+def test_download_survives_bracketed_ipv6_in_no_proxy(monkeypatch, tmp_path):
+    """Regression: httpx.Client() raises InvalidURL on NO_PROXY entries like
+    "[::1]" (it parses ':1]' as a port) while building the client, before any
+    request is made — so every core download failed in such environments.
+    The downloader must fall back to trust_env=False instead."""
+    monkeypatch.setenv("NO_PROXY", "localhost,127.0.0.1,[::1]")
+    monkeypatch.setenv("no_proxy", "localhost,127.0.0.1,[::1]")
+    content = b"no-proxy-ipv6" * 1000
+    url, server = _start_file_server(content)
+    try:
+        entry = {"id": "test-model", "url": url}
+        dest = tmp_path / "model.gguf"
+        size, sha = ai_cores._download_binary_to_disk(entry, dest)
+        assert size == len(content)
+        assert sha == hashlib.sha256(content).hexdigest()
+        assert dest.read_bytes() == content
+    finally:
+        server.shutdown()
