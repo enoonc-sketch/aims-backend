@@ -2,9 +2,17 @@ name: build-exe
 # 在 GitHub 云端的 Windows 机器上打包 AIMS 后端：不需要自己电脑装 Python。
 # 用法：把这个文件放到仓库 .github/workflows/build-exe.yml → Actions → build-exe → Run workflow，
 # 跑完在页面底部 Artifacts 里下载 AIMS-Backend（文件夹，里面就是 AIMS-Backend.exe，双击运行）。
-# 也可以推一个 v* 标签（如 v0.5.2）自动触发。
+# 也可以推一个 v* 标签（如 v0.5.3）自动触发。
 on:
   workflow_dispatch:
+    inputs:
+      # ai_stack=lite (default) skips the ~240MB AI stack for a ~149MB EXE;
+      # full installs llama / sklearn / statsmodels.
+      ai_stack:
+        description: "AI stack: lite (default, ~149MB, no local LLM/AI features) or full"
+        type: choice
+        options: [lite, full]
+        default: lite
   push:
     tags: ["v*"]
 jobs:
@@ -15,18 +23,25 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
+          cache: pip
+          cache-dependency-path: |
+            requirements-exe.txt
+            requirements-exe.lock
       - name: Install dependencies
+        env:
+          PYTHONUTF8: "1"
         run: |
           python -m pip install --upgrade pip setuptools wheel
-          pip install -r requirements-exe.txt
+          pip install -r requirements-exe.lock
       - name: Install optional local-AI packages
+        if: inputs.ai_stack != 'lite'
         shell: bash
         # 失败也没关系：没有本地 LLM 也能照常打包、照常运行，只是本地模型功能不可用
         continue-on-error: true
         run: |
           AI_WHEEL_INDEX=https://abetlen.github.io/llama-cpp-python/whl/cpu
-          for ver in 0.3.4 0.3.2 0.2.90; do
-            if pip install --no-cache-dir --only-binary=llama-cpp-python --extra-index-url "$AI_WHEEL_INDEX" "llama-cpp-python==$ver" "numpy>=1.26.4" "scikit-learn>=1.5.2" "statsmodels>=0.14.2" "joblib>=1.4.2"; then
+          for ver in 0.3.2 0.2.90; do
+            if pip install --only-binary=llama-cpp-python --extra-index-url "$AI_WHEEL_INDEX" "llama-cpp-python==$ver" "numpy>=1.26.4" "scikit-learn>=1.5.2" "statsmodels>=0.14.2" "joblib>=1.4.2"; then
               echo "llama-cpp-python==$ver installed OK"
               break
             fi
@@ -37,6 +52,8 @@ jobs:
         shell: bash
         # cores/vendor 本来就在仓库里，这步只是补全；失败也不影响打包
         continue-on-error: true
+        env:
+          PYTHONUTF8: "1"
         run: python scripts/download_cores.py
       - name: Build exe
         env:
@@ -47,7 +64,7 @@ jobs:
         run: |
           if (-not (Test-Path dist\AIMS-Backend\AIMS-Backend.exe)) { throw "AIMS-Backend.exe not found after build" }
           Get-ChildItem -Recurse dist\AIMS-Backend | Select-Object FullName, Length | Format-Table -AutoSize
-      - uses: actions/upload-artifact@v5
+      - uses: actions/upload-artifact@v7
         with:
-          name: AIMS-Backend
+          name: ${{ inputs.ai_stack == 'lite' && 'AIMS-Backend-Lite' || 'AIMS-Backend' }}
           path: dist/AIMS-Backend/
