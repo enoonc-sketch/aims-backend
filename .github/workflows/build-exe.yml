@@ -2,7 +2,7 @@ name: build-exe
 # 在 GitHub 云端的 Windows 机器上打包 AIMS 后端：不需要自己电脑装 Python。
 # 用法：把这个文件放到仓库 .github/workflows/build-exe.yml → Actions → build-exe → Run workflow，
 # 跑完在页面底部 Artifacts 里下载 AIMS-Backend（文件夹，里面就是 AIMS-Backend.exe，双击运行）。
-# 也可以推一个 v* 标签（如 v0.5.3）自动触发。
+# 也可以推一个 v* 标签（如 v0.5.4）自动触发。
 on:
   workflow_dispatch:
     inputs:
@@ -64,7 +64,20 @@ jobs:
         run: |
           if (-not (Test-Path dist\AIMS-Backend\AIMS-Backend.exe)) { throw "AIMS-Backend.exe not found after build" }
           Get-ChildItem -Recurse dist\AIMS-Backend | Select-Object FullName, Length | Format-Table -AutoSize
+      - name: Install Inno Setup and build installer
+        shell: pwsh
+        run: |
+          choco install innosetup -y --no-progress
+          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" installer/AIMS-Backend.iss
+      - name: Check installer output
+        shell: pwsh
+        run: |
+          if (-not (Test-Path installer_output\AIMS-Backend-Setup.exe)) { throw "AIMS-Backend-Setup.exe not found after ISCC" }
       - uses: actions/upload-artifact@v7
         with:
           name: ${{ inputs.ai_stack == 'lite' && 'AIMS-Backend-Lite' || 'AIMS-Backend' }}
           path: dist/AIMS-Backend/
+      - uses: actions/upload-artifact@v7
+        with:
+          name: AIMS-Backend-Setup
+          path: installer_output/AIMS-Backend-Setup.exe
