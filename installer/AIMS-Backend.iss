@@ -1,5 +1,5 @@
 ﻿#define MyAppName "AIMS Backend"
-#define MyAppVersion "0.5.4"
+#define MyAppVersion "0.5.5"
 #define MyAppExeName "AIMS-Backend.exe"
 
 [Setup]
