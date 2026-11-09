@@ -214,6 +214,12 @@ build_exe.bat
 dist\AIMS-Backend.exe
 ```
 
+### 桌面版与安装包
+
+- 双击冻结 EXE 打开的是桌面窗口（不是浏览器）。
+- 没有 WebView2 Runtime 时，界面会回退到系统浏览器。
+- 运行 `build_installer.bat` 可打安装包（需 Inno Setup 6）。
+
 ### 运行 EXE
 
 1. 双击 `AIMS-Backend.exe`

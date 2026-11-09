@@ -14,6 +14,10 @@ import os
 import sys
 import traceback
 import webbrowser
+import threading
+import time
+import urllib.request
+import ssl
 from pathlib import Path
 
 
@@ -85,6 +89,66 @@ def _write_crash_log(base: Path, exc: BaseException) -> Path:
     return log_path
 
 
+def _open_ui_window(base_url: str, settings) -> bool:
+    """Open the UI in a pywebview desktop window.
+
+    Returns True only if a window was actually shown (webview.start() ran
+    until the window was closed). Any failure falls back to the system
+    browser and returns False; the server keeps running either way.
+    """
+    # TLS mode: WebView2 cannot show the self-signed cert (cert-error page
+    # with no click-through), and the HTTPS middleware rejects plaintext
+    # http with 403 (app/core/middleware.py:43-64). Keep the browser here,
+    # where the user can click through the cert warning.
+    if getattr(settings, "tls_direct", False) or getattr(settings, "https_required", False):
+        print("TLS is on: opening the UI in the system browser (the desktop window needs plain http).")
+        try:
+            webbrowser.open(f"{base_url}/ui")
+        except Exception:
+            pass
+        return False
+    # Desktop window only for the frozen EXE; `python run_standalone.py`
+    # from source keeps the old browser behaviour.
+    if not getattr(sys, "frozen", False):
+        try:
+            webbrowser.open(f"{base_url}/ui")
+        except Exception:
+            pass
+        return False
+    try:
+        import webview
+    except ImportError:
+        print("pywebview is not installed; opening the UI in the system browser.")
+        try:
+            webbrowser.open(f"{base_url}/ui")
+        except Exception:
+            pass
+        return False
+    try:
+        try:  # pywebview 5+: allow <a download> (CSV export) to show a save dialog
+            webview.settings["ALLOW_DOWNLOADS"] = True
+        except Exception:
+            pass
+        webview.create_window(
+            "AIMS Backend", f"{base_url}/ui",
+            width=1280, height=800,
+            resizable=True, text_select=True,
+            # Do not set on_top=True; pywebview 6.2.1 has an EdgeChromium
+            # deadlock under activation load (r0x0r/pywebview#1823).
+        )
+        webview.start()
+        return True
+    except Exception as e:
+        print(f"Desktop window failed ({e}); opening the UI in the system browser.")
+        print("If WebView2 Runtime is missing, install it from:")
+        print("https://developer.microsoft.com/microsoft-edge/webview2/")
+        try:
+            webbrowser.open(f"{base_url}/ui")
+        except Exception:
+            pass
+        return False
+
+
 def main() -> int:
     base = _base_dir()
     _prepare_env(base)
@@ -136,17 +200,11 @@ def main() -> int:
         print("Press Ctrl+C to stop the server.")
         print()
 
-        if os.environ.get("AIMS_OPEN_BROWSER", "1") == "1":
-            try:
-                webbrowser.open(f"{base_url}/ui")
-            except Exception:
-                pass
-
         # Pass app object, NOT "app.main:app" string (breaks in frozen EXE)
         tls_kwargs = {}
         if settings.tls_direct:
             tls_kwargs = {"ssl_certfile": settings.SSL_CERTFILE, "ssl_keyfile": settings.SSL_KEYFILE}
-        uvicorn.run(
+        config = uvicorn.Config(
             app,
             host=host,
             port=port,
@@ -158,6 +216,53 @@ def main() -> int:
             forwarded_allow_ips=",".join(settings.trusted_proxy_list) or "127.0.0.1",
             **tls_kwargs,
         )
+        server = uvicorn.Server(config)
+
+        # AIMS_OPEN_BROWSER keeps its existing meaning: "1" (default) opens
+        # the UI (desktop window in a frozen EXE, browser otherwise); "0"
+        # starts the server without opening anything for headless/remote use.
+        server_thread = threading.Thread(target=server.run, daemon=True)
+        server_thread.start()
+
+        # Wait until the server really answers /health (max 15 s, no proxy:
+        # system proxy settings must not intercept localhost).
+        healthy = False
+        deadline = time.time() + 15
+        while time.time() < deadline:
+            try:
+                handlers = [urllib.request.ProxyHandler({})]
+                if scheme == "https":
+                    handlers.append(urllib.request.HTTPSHandler(
+                        context=ssl._create_unverified_context()))
+                opener = urllib.request.build_opener(*handlers)
+                req = urllib.request.Request(base_url + "/health")
+                with opener.open(req, timeout=0.5) as r:
+                    if r.status == 200:
+                        healthy = True
+                        break
+            except Exception:
+                time.sleep(0.15)
+        if not healthy:
+            print("Server did not become ready in 15 s.")
+            print(f"If it actually started, open manually: {base_url}/ui")
+            server.should_exit = True
+            return 1
+
+        opened_window = False
+        if os.environ.get("AIMS_OPEN_BROWSER", "1") == "1":
+            opened_window = _open_ui_window(base_url, settings)
+
+        if not opened_window:
+            # With no window (source, TLS, AIMS_OPEN_BROWSER=0, or fallback),
+            # wait for the server until Ctrl+C, preserving the prior behavior.
+            try:
+                while server_thread.is_alive():
+                    server_thread.join(timeout=1)
+            except KeyboardInterrupt:
+                print("\nServer stopped.")
+        # Closing the window ends the main thread and stops the daemon server.
+        server.should_exit = True
+        server_thread.join(timeout=5)
         return 0
 
     except KeyboardInterrupt:

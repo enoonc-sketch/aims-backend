@@ -76,9 +76,10 @@ if errorlevel 1 (
 )
 
 echo.
-REM Perf opt (report item 8): the optional AI stack (llama / sklearn / statsmodels,
-REM ~240MB) is installed ONLY when AIMS_BUILD_AI=1 (full build). Unset / 0 / empty =
-REM lite build (~149MB). build_exe_lite.bat is the one-click lite entry.
+REM Perf opt (report item 8, 0.5.3): lite is now the DEFAULT download.
+REM AIMS_BUILD_AI unset, empty or 0 skips the optional AI stack
+REM (llama / sklearn / statsmodels, ~240MB) for a ~149MB lite EXE;
+REM set AIMS_BUILD_AI=1 explicitly for the full build.
 if not "%AIMS_BUILD_AI%"=="1" (
     echo [Lite build] Skipping optional AI packages (set AIMS_BUILD_AI=1 for the full build).
     goto SKIP_AI
@@ -149,7 +150,7 @@ goto OK
 
 :CLI
 echo Using command-line build...
-pyinstaller --noconfirm --clean --onedir --console --name AIMS-Backend --add-data "frontend.html;." --add-data "cores/vendor;cores/vendor" --add-data "cores/manifest.json;cores" --hidden-import uvicorn --hidden-import fastapi --hidden-import starlette --hidden-import sqlalchemy --hidden-import pydantic --hidden-import pydantic_settings --hidden-import app --hidden-import app.main --hidden-import app.db.session --hidden-import app.db.init_db --hidden-import app.api.v1.router --hidden-import pandas --hidden-import openpyxl --hidden-import xlrd --exclude-module pgvector --exclude-module psycopg2 --exclude-module alembic --exclude-module watchfiles --exclude-module uvloop --exclude-module httptools --exclude-module pytest run_standalone.py
+pyinstaller --noconfirm --clean --onedir --console --name AIMS-Backend --add-data "frontend.html;." --add-data "cores/vendor;cores/vendor" --add-data "cores/manifest.json;cores" --hidden-import webview --hidden-import webview.platforms.edgechromium --hidden-import webview.platforms.winforms --hidden-import clr_loader --hidden-import pythonnet --hidden-import proxy_tools --hidden-import bottle --hidden-import uvicorn --hidden-import fastapi --hidden-import starlette --hidden-import sqlalchemy --hidden-import pydantic --hidden-import pydantic_settings --hidden-import app --hidden-import app.main --hidden-import app.db.session --hidden-import app.db.init_db --hidden-import app.api.v1.router --hidden-import pandas --hidden-import openpyxl --hidden-import xlrd --exclude-module pgvector --exclude-module psycopg2 --exclude-module alembic --exclude-module watchfiles --exclude-module uvloop --exclude-module httptools --exclude-module pytest run_standalone.py
 if errorlevel 1 (
     echo.
     echo BUILD FAILED - copy the error above

@@ -2,7 +2,7 @@
 """Simplified PyInstaller spec — SQLite EXE, fewer failure points."""
 import os
 
-from PyInstaller.utils.hooks import collect_dynamic_libs, collect_data_files
+from PyInstaller.utils.hooks import collect_dynamic_libs, collect_data_files, collect_submodules
 
 block_cipher = None
 
@@ -37,6 +37,14 @@ datas += collect_data_files("llama_cpp")
 
 # Do NOT force-import optional Postgres/pgvector (they break analysis if wheels fail)
 hiddenimports = [
+    # 0.5.4 desktop window; collect pywebview's runtime-selected backend.
+    "webview",
+    "webview.platforms.edgechromium",
+    "webview.platforms.winforms",
+    "clr_loader",
+    "pythonnet",
+    "proxy_tools",
+    "bottle",
     "uvicorn",
     "uvicorn.logging",
     "uvicorn.loops",
@@ -73,6 +81,12 @@ hiddenimports = [
     "sqlite3",
     "bcrypt",
     "defusedxml",
+    # 0.5.3: APScheduler is imported inside functions (external_scheduler.py),
+    # which PyInstaller's static scan can miss after a refactor — declare it
+    # explicitly so the EXE never silently loses external-data auto-refresh.
+    "apscheduler",
+    "apscheduler.schedulers.background",
+    "apscheduler.triggers.interval",
     "defusedxml.ElementTree",
     "jose",
     "jose.jwt",
@@ -146,11 +160,6 @@ hiddenimports = [
     "statsmodels",
     "statsmodels.tsa.holtwinters",
     "joblib",
-    # external-data auto-refresh (app/services/external_scheduler.py): imported only
-    # inside functions, so declare explicitly or a refactor could drop it from the EXE.
-    "apscheduler",
-    "apscheduler.schedulers.background",
-    "apscheduler.triggers.interval",
     # pandas + its Excel engines: every /import endpoint (measurements, devices,
     # gateways, assets, work orders, lab samples, knowledge docs, analysis) and
     # every /import/template download go through app/services/table_import.py,
@@ -161,6 +170,17 @@ hiddenimports = [
     "pandas",
     "openpyxl",
     "xlrd",
+]
+
+# pywebview selects its platform backend (edgechromium / winforms / ...) at
+# runtime, so static analysis cannot see those imports. The hook-webview.py
+# in pyinstaller-hooks-contrib only collects data files and dynamic libs,
+# not submodules — collect them all explicitly (the explicit entries above
+# stay as a belt-and-braces list for the Windows backends).
+hiddenimports += collect_submodules('webview')
+hiddenimports += [
+    'clr_loader',
+    'pythonnet',
 ]
 
 a = Analysis(
