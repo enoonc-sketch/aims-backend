@@ -214,12 +214,6 @@ build_exe.bat
 dist\AIMS-Backend.exe
 ```
 
-### 桌面版与安装包
-
-- 双击冻结 EXE 打开的是桌面窗口（不是浏览器）。
-- 没有 WebView2 Runtime 时，界面会回退到系统浏览器。
-- 运行 `build_installer.bat` 可打安装包（需 Inno Setup 6）。
-
 ### 运行 EXE
 
 1. 双击 `AIMS-Backend.exe`
@@ -244,6 +238,14 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000
 - EXE 模式使用 SQLite，**不支持** Timescale hypertable 与 pgvector 近似搜索；适合演示、离线部署、单机使用。
 - 若需要完整时序分析 + 向量 RAG，请继续使用 Docker Compose 的 PostgreSQL 方案。
 - 打包请在 **Windows** 机器上执行 `build_exe.bat`（跨平台交叉编译不推荐）。
+
+### 桌面版与安装包（0.5.4 起）
+
+以本节为准；上面"运行 EXE"里"自动打开浏览器"是 0.5.3 及以前的行为。
+
+- 双击 `AIMS-Backend.exe` 打开的是**桌面窗口**（内嵌 `/ui` 界面），不再跳转到系统浏览器；关闭窗口即停止服务、退出程序。窗口需要系统里的 WebView2 Runtime（Windows 11 自带，Windows 10 通常随 Edge 更新已有）；没有它、或窗口打不开时，程序自动回退到系统浏览器，服务照常运行。
+- 以下情况同样走浏览器：开启 TLS（自签名证书在窗口里无法点击放行）、从源码运行 `python run_standalone.py`。设置环境变量 `AIMS_OPEN_BROWSER=0` 则什么都不打开，只跑服务（无头 / 远程用法）。
+- 运行 `build_installer.bat` 打 Windows 安装包：先打出 `dist\AIMS-Backend`，再用 Inno Setup 6 编译 `installer\AIMS-Backend.iss`，得到 `installer_output\AIMS-Backend-Setup.exe`（需先装 Inno Setup 6：<https://jrsoftware.org/isdl.php>）。安装包默认装到 `%LOCALAPPDATA%\AIMS Backend`，数据目录 `aims_data` 仍在程序目录内，卸载不会删除它。GitHub Actions 的 workflow 也会同时产出 `AIMS-Backend-Setup`。
 
 ---
 

@@ -129,12 +129,13 @@ def _open_ui_window(base_url: str, settings) -> bool:
             webview.settings["ALLOW_DOWNLOADS"] = True
         except Exception:
             pass
-        webview.create_window(
+        window = webview.create_window(
             "AIMS Backend", f"{base_url}/ui",
             width=1280, height=800,
             resizable=True, text_select=True,
-            # Do not set on_top=True; pywebview 6.2.1 has an EdgeChromium
-            # deadlock under activation load (r0x0r/pywebview#1823).
+            # NOTE: do NOT set on_top=True — pywebview 6.2.1 has a known
+            # EdgeChromium deadlock with on_top under activation load
+            # (r0x0r/pywebview#1823). sing-box sets on_top=True; do not copy it.
         )
         webview.start()
         return True

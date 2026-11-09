@@ -21,18 +21,28 @@
 # dropped with plain uvicorn; PyYAML went with uvicorn[standard] (nothing in
 # the app imports yaml). APScheduler 3.10.4 added (with tzlocal + pytz) so the
 # EXE restores external-data auto-refresh.
-# 0.5.4 update (2026-11-09): pywebview 6.2.1 resolved on Windows (Python 3.14.6) with pythonnet 3.2.1, clr_loader 0.3.1, proxy_tools 0.1.0, bottle 0.13.4; pefile / pywin32-ctypes are PyInstaller Windows deps. All other pins unchanged from the verified 0.5.3 lock.
+# Update 2026-11-09 (0.5.4, desktop window): pywebview==6.2.1 added with
+# bottle==0.13.4 and proxy_tools==0.1.0 (pure Python; verified by a Linux
+# install of this lock + pywebview). pythonnet==3.2.1, clr_loader==0.3.1,
+# pefile==2024.8.26 and pywin32-ctypes==0.2.3 are only usable on Windows
+# (pywebview's Edge WebView2 backend / PyInstaller's Windows handling), so
+# they carry a sys_platform == "win32" marker and are skipped on Linux
+# installs; their versions stay pinned for the Windows build. (They do ship
+# pure-Python wheels and would install on Linux — the marker only keeps
+# non-Windows installs lean, it is not an installability fix.)
+# cffi / pycparser (already pinned) are their dependencies.
+APScheduler==3.10.4
+SQLAlchemy==2.1.8
 altgraph==0.17.5
 annotated-doc==0.0.5
 annotated-types==0.8.0
 anyio==4.16.0
-APScheduler==3.10.4
 bcrypt==5.0.0
 bottle==0.13.4
 certifi==2026.10.23
 cffi==2.1.1
+clr_loader==0.3.1 ; sys_platform == "win32"
 click==8.5.1
-clr_loader==0.3.1
 cryptography==50.0.2
 defusedxml==0.7.1
 ecdsa==0.19.2
@@ -45,29 +55,28 @@ idna==3.20
 numpy==2.5.4
 openpyxl==3.1.5
 opentelemetry-api==1.45.2
+pefile==2024.8.26 ; sys_platform == "win32"
 packaging==26.3
 pandas==3.1.1
-pefile==2024.8.26
-proxy_tools==0.1.0
 pyasn1==0.6.5
 pycparser==3.12
-pydantic==2.14.3
+proxy_tools==0.1.0
 pydantic-settings==2.16.2
+pydantic==2.14.3
 pydantic_core==2.50.4
-pyinstaller==6.22.3
 pyinstaller-hooks-contrib==2026.9
+pyinstaller==6.22.3
 python-dateutil==4.0.0
 python-dotenv==1.2.4
 python-jose==3.5.0
 python-multipart==0.0.33
-pythonnet==3.2.1
+pythonnet==3.2.1 ; sys_platform == "win32"
+pywin32-ctypes==0.2.3 ; sys_platform == "win32"
 pytz==2026.6
 pywebview==6.2.1
-pywin32-ctypes==0.2.3
 rsa==4.9.1
 setuptools==84.2.1
 six==1.17.0
-SQLAlchemy==2.1.8
 starlette==1.10.0
 typing-inspection==0.4.5
 typing_extensions==4.16.0

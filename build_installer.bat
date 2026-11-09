@@ -1,8 +1,11 @@
 @echo off
 REM ============================================================================
-REM  AIMS Backend — build the Windows installer
-REM  Builds dist\AIMS-Backend, then compiles installer\AIMS-Backend.iss with ISCC.
-REM  Requires Inno Setup 6 (https://jrsoftware.org/isdl.php or choco install innosetup).
+REM  AIMS Backend — 本地打安装包（Windows）
+REM  先调 build_exe.bat 打出 dist\AIMS-Backend，再用 Inno Setup 6 的
+REM  ISCC.exe 编译 installer\AIMS-Backend.iss，产出
+REM  installer_output\AIMS-Backend-Setup.exe。
+REM  需要本机装好 Inno Setup 6（https://jrsoftware.org/isdl.php，
+REM  或 choco install innosetup）。
 REM ============================================================================
 cd /d "%~dp0"
 call "%~dp0build_exe.bat"
