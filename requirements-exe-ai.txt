@@ -1,0 +1,33 @@
+# OPTIONAL local-AI stack — used for running downloaded GGUF chat/embedding
+# models fully offline (see app/services/llm_local.py). The app runs fine
+# without these; local LLM features just stay unavailable until they're
+# installed.
+#
+# NOTE: build_exe.bat / build_onefile.bat do NOT install llama-cpp-python
+# via `pip install -r requirements-exe-ai.txt` anymore. They install it with
+# explicit inline pip commands that (a) try several known-good pinned
+# versions in order and (b) pass --only-binary=llama-cpp-python, so a
+# version/Python combo with no matching wheel fails fast and clean instead
+# of silently falling back to a from-source CMake build (which needs Visual
+# Studio's C++ build tools and used to fail with a wall of confusing CMake
+# errors). See the "Installing OPTIONAL local-AI packages" step in either
+# build script for the actual, current list of versions tried.
+#
+# This file is kept as a plain reference for manual/non-build-script
+# installs (e.g. `pip install -r requirements-exe-ai.txt --extra-index-url
+# https://abetlen.github.io/llama-cpp-python/whl/cpu`) and lists the same
+# primary pinned version the build scripts try first. If that version starts
+# failing for you, check
+# https://abetlen.github.io/llama-cpp-python/whl/cpu/llama-cpp-python/
+# directly to see what's actually listed there, and either pass a different
+# version on the command line or update this file and the build scripts to
+# match.
+#
+# llama-cpp-python only ships pre-built wheels for a subset of Python
+# versions (best coverage: 3.10/3.11/3.12). Rebuilding with one of those
+# avoids this whole class of problem.
+numpy>=1.26.4
+llama-cpp-python==0.3.4
+statsmodels>=0.14.2
+scikit-learn>=1.5.2
+joblib>=1.4.2

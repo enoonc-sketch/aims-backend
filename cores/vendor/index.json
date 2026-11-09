@@ -1,0 +1,88 @@
+{
+  "cores": [
+    {
+      "id": "xlsx",
+      "name": "SheetJS Community Edition (xlsx)",
+      "license": "Apache-2.0",
+      "homepage": "https://github.com/SheetJS/sheetjs",
+      "filename": "xlsx.full.min.js",
+      "purpose": "Parse .xlsx/.xls for Data Analysis import",
+      "local_path": "/cores/xlsx.full.min.js",
+      "ok": true,
+      "kind": "data",
+      "bytes": 951904
+    },
+    {
+      "id": "chartjs",
+      "name": "Chart.js",
+      "license": "MIT",
+      "homepage": "https://www.chartjs.org/",
+      "filename": "chart.umd.min.js",
+      "purpose": "Trend / curve charts on Data Analysis page",
+      "local_path": "/cores/chart.umd.min.js",
+      "ok": true,
+      "kind": "data",
+      "bytes": 205399
+    },
+    {
+      "id": "chartjs-adapter-date",
+      "name": "chartjs-adapter-date-fns",
+      "license": "MIT",
+      "homepage": "https://github.com/chartjs/chartjs-adapter-date-fns",
+      "filename": "chartjs-adapter-date-fns.bundle.min.js",
+      "purpose": "Time axis for Chart.js",
+      "local_path": "/cores/chartjs-adapter-date-fns.bundle.min.js",
+      "ok": true,
+      "kind": "data",
+      "bytes": 50650
+    },
+    {
+      "id": "ai-diagnosis-rules",
+      "name": "Analyzer Diagnosis Rule Pack",
+      "license": "MIT",
+      "homepage": "local://cores/ai/diagnosis_rules.json",
+      "filename": "ai/diagnosis_rules.json",
+      "purpose": "Offline fault diagnosis rules for AI Center",
+      "local_path": "/cores/ai/diagnosis_rules.json",
+      "ok": true,
+      "kind": "ai",
+      "bytes": 3609
+    },
+    {
+      "id": "ai-health-weights",
+      "name": "Health Score Weight Pack",
+      "license": "MIT",
+      "homepage": "local://cores/ai/health_weights.json",
+      "filename": "ai/health_weights.json",
+      "purpose": "Configurable penalties for device health scoring",
+      "local_path": "/cores/ai/health_weights.json",
+      "ok": true,
+      "kind": "ai",
+      "bytes": 482
+    },
+    {
+      "id": "ai-rag-prompts",
+      "name": "RAG / Chat Prompt Pack",
+      "license": "MIT",
+      "homepage": "local://cores/ai/rag_prompts.json",
+      "filename": "ai/rag_prompts.json",
+      "purpose": "System prompts for RAG and offline chat",
+      "local_path": "/cores/ai/rag_prompts.json",
+      "ok": true,
+      "kind": "ai",
+      "bytes": 813
+    },
+    {
+      "id": "ai-prediction-baseline",
+      "name": "Linear Baseline Prediction Core",
+      "license": "MIT",
+      "homepage": "local://cores/ai/prediction_baseline.json",
+      "filename": "ai/prediction_baseline.json",
+      "purpose": "Open baseline time-series extrapolation config",
+      "local_path": "/cores/ai/prediction_baseline.json",
+      "ok": true,
+      "kind": "ai",
+      "bytes": 294
+    }
+  ]
+}

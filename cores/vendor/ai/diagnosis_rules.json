@@ -1,0 +1,132 @@
+{
+  "name": "AIMS Analyzer Diagnosis Rules",
+  "version": "1.0",
+  "license": "MIT",
+  "description": "Open rule pack for GC/FTIR process analyzer fault diagnosis",
+  "rules": [
+    {
+      "id": "drift_high",
+      "symptoms": ["Drift", "drift", "high_reading", "high"],
+      "components": ["*"],
+      "diagnosis": "Component reading shows upward drift relative to recent baseline. Likely causes: calibration gas depleted, sample line contamination, or detector aging.",
+      "confidence": 0.78,
+      "recommendation": "1) Verify calibration gas cylinder pressure and expiry. 2) Run multi-point calibration. 3) Check sample filter and probe for deposits."
+    },
+    {
+      "id": "drift_low",
+      "symptoms": ["Drift", "drift", "low_reading", "low"],
+      "components": ["*"],
+      "diagnosis": "Component reading shows downward drift. Possible sample dilution, carrier gas leak, or detector sensitivity loss.",
+      "confidence": 0.75,
+      "recommendation": "1) Leak-check sample and carrier lines. 2) Confirm purge/carrier flow setpoints. 3) Inspect detector (FID flame / TCD filament)."
+    },
+    {
+      "id": "noise",
+      "symptoms": ["Noise", "noise", "unstable", "spike"],
+      "components": ["*"],
+      "diagnosis": "Elevated noise or spiking on the channel. Common causes: electrical interference, unstable utility gases, dirty column or detector.",
+      "confidence": 0.72,
+      "recommendation": "1) Check grounding and shield on signal cables. 2) Stabilize H2/Air/He supply pressures. 3) Condition or replace column if residual noise persists."
+    },
+    {
+      "id": "response_slow",
+      "symptoms": ["Response", "response", "slow", "lag"],
+      "components": ["*"],
+      "diagnosis": "Slow dynamic response to process changes. Often caused by long sample lag, restricted probe, or excessive filter volume.",
+      "confidence": 0.8,
+      "recommendation": "1) Measure sample transport time. 2) Clean/replace sample filter. 3) Shorten sample line if lag exceeds design."
+    },
+    {
+      "id": "methane_high",
+      "symptoms": ["high_reading", "high", "alarm"],
+      "components": ["Methane", "methane", "CH4"],
+      "diagnosis": "Methane concentration elevated vs operating envelope. Could be true process upset or analyzer bias after calibration shift.",
+      "confidence": 0.82,
+      "recommendation": "1) Cross-check with lab sample. 2) Review last calibration coefficients. 3) Inspect for sample line leak drawing in fuel gas."
+    },
+    {
+      "id": "fid_flameout",
+      "symptoms": ["flame", "flameout", "FID"],
+      "components": ["*"],
+      "diagnosis": "FID flame-out signature. Hydrogen or air supply interruption is the most frequent root cause.",
+      "confidence": 0.88,
+      "recommendation": "1) Confirm H2 and air pressures at analyzer. 2) Relight FID per SOP. 3) Check igniter and jet for blockage."
+    },
+    {
+      "id": "sum_offspec",
+      "symptoms": ["sum", "component_sum", "balance"],
+      "components": ["*"],
+      "diagnosis": "Component sum outside 99-104% band indicates calibration or missing component issue.",
+      "confidence": 0.85,
+      "recommendation": "1) Recalibrate major components. 2) Verify all reported peaks are integrated. 3) Check for unreported heavies (Hexane+)."
+    },
+    {
+      "id": "co2_high",
+      "symptoms": ["high_reading", "high", "alarm"],
+      "components": ["CO2", "co2", "Carbon Dioxide"],
+      "diagnosis": "CO2 concentration elevated. Could be a true process upset, or a TCD/NDIR sensor bias after a calibration shift.",
+      "confidence": 0.8,
+      "recommendation": "1) Cross-check with lab sample or a secondary analyzer. 2) Verify CO2 span gas certificate and last calibration date. 3) Check sample system for air in-leakage.",
+      "severity": "medium"
+    },
+    {
+      "id": "h2s_high",
+      "symptoms": ["high_reading", "high", "alarm"],
+      "components": ["H2S", "h2s", "Hydrogen Sulfide"],
+      "diagnosis": "H2S reading elevated — safety-relevant. Could reflect a genuine sour-gas upset or sensor drift/contamination.",
+      "confidence": 0.85,
+      "recommendation": "1) Treat as a potential safety event until confirmed otherwise; follow site H2S procedure. 2) Verify with a portable/lab reference. 3) Inspect sensor for poisoning/contamination and recalibrate.",
+      "severity": "high"
+    },
+    {
+      "id": "nitrogen_offspec",
+      "symptoms": ["high_reading", "low_reading", "high", "low", "drift"],
+      "components": ["Nitrogen", "nitrogen", "N2"],
+      "diagnosis": "Nitrogen reading has moved outside its typical operating band. On a GC this is often the first symptom of a carrier-gas or column issue rather than a real process change.",
+      "confidence": 0.7,
+      "recommendation": "1) Check carrier gas (He/N2) supply pressure and purity. 2) Verify column condition and oven temperature. 3) Confirm all other components still sum correctly.",
+      "severity": "medium"
+    },
+    {
+      "id": "heavies_high",
+      "symptoms": ["high_reading", "high", "alarm"],
+      "components": ["Pentane", "Hexane", "C5+", "C6+", "heavies"],
+      "diagnosis": "Heavy-ends (C5+/C6+) reading elevated. Common causes: liquid carryover/slugging into the sample system, or column bleed mis-integrated as a heavy peak.",
+      "confidence": 0.75,
+      "recommendation": "1) Check sample probe location and knockout pot/filter for liquid carryover. 2) Verify sample line is heat-traced above dew point. 3) Review chromatogram integration around the heavies window.",
+      "severity": "medium"
+    },
+    {
+      "id": "pressure_low",
+      "symptoms": ["low_reading", "low", "pressure"],
+      "components": ["Pressure", "pressure", "Sample Pressure"],
+      "diagnosis": "Sample system pressure below normal operating range, which can starve the analyzer and bias every component reading low.",
+      "confidence": 0.78,
+      "recommendation": "1) Check regulator setpoint and upstream tap/valve position. 2) Leak-check the sample line. 3) Confirm pump/eductor (if used) is operating.",
+      "severity": "high"
+    },
+    {
+      "id": "temperature_high",
+      "symptoms": ["high_reading", "high", "temperature"],
+      "components": ["Temperature", "temperature", "Oven Temp", "Enclosure Temp"],
+      "diagnosis": "Analyzer/oven temperature running above setpoint, which can shift retention times and detector baselines.",
+      "confidence": 0.75,
+      "recommendation": "1) Check heater/controller for a stuck-on output. 2) Verify enclosure ventilation/cooling fan operation. 3) Re-run calibration once temperature is stable.",
+      "severity": "medium"
+    },
+    {
+      "id": "calibration_span_shift",
+      "symptoms": ["calibration", "span", "cal_fail", "cal fail"],
+      "components": ["*"],
+      "diagnosis": "Calibration span check has shifted outside tolerance versus the reference value. The analyzer is likely reading biased across the whole range, not just at this one point.",
+      "confidence": 0.83,
+      "recommendation": "1) Confirm calibration gas cylinder pressure, certificate, and expiry. 2) Repeat the span check to rule out a one-off bad injection. 3) If repeatable, run a full multi-point calibration and inspect the detector.",
+      "severity": "medium"
+    }
+  ],
+  "default": {
+    "diagnosis": "Insufficient symptom match in the open rule pack. Provide more context or connect an LLM (AI_API_KEY) for generative diagnosis.",
+    "confidence": 0.4,
+    "recommendation": "Collect recent trends, last calibration report, and utility gas status before escalating to vendor support."
+  }
+}

@@ -1,0 +1,40 @@
+fastapi==0.115.0
+uvicorn[standard]==0.30.6
+sqlalchemy==2.0.35
+psycopg2-binary==2.9.9
+asyncpg==0.29.0
+alembic==1.13.2
+pydantic==2.9.2
+pydantic-settings==2.5.2
+python-dotenv==1.0.1
+passlib[bcrypt]==1.7.4
+# passlib 1.7.4 reads bcrypt.__about__.__version__ to detect the backend; that
+# attribute was removed in bcrypt>=4.1, which makes passlib silently mis-detect
+# the backend and raise "password cannot be longer than 72 bytes" on every
+# hash/verify call (login is broken end-to-end). Pin bcrypt to the last
+# release that still exposes __about__ so passlib's version probe succeeds.
+bcrypt==4.0.1
+python-jose[cryptography]==3.3.0
+python-multipart==0.0.9
+pgvector==0.3.4
+httpx==0.27.2
+pytest==8.3.3
+pytest-asyncio==0.24.0
+
+# Standalone / EXE packaging
+pyinstaller==6.10.0
+
+# --- Real local AI models (replaces the old rule-pack/linear-extrapolation stubs) ---
+numpy==1.26.4
+llama-cpp-python==0.2.90   # runs the downloaded GGUF chat LLM + embedding model, CPU-only wheel by default
+statsmodels==0.14.2        # Holt's linear-trend exponential smoothing for /ai/predict
+scikit-learn==1.5.2        # IsolationForest anomaly scoring for /ai/diagnose
+joblib==1.4.2               # persists trained per-device diagnosis models to disk
+pandas==2.2.3               # parses uploaded CSV/Excel files for /measurements/import
+openpyxl==3.1.5              # .xlsx engine used by pandas.read_excel for /measurements/import
+xlrd==2.0.1                   # legacy .xls engine — every /import endpoint's upload button accepts .xls
+
+# --- External vendor-platform data source (Data Management: 网页抓取模块) ---
+playwright==1.47.0          # headless-browser login + click-to-download automation; run `playwright install chromium` after pip install
+cryptography==43.0.1         # reversible encryption for stored vendor-site login passwords (crypto_util.py)
+apscheduler==3.10.4          # in-process scheduler for auto-refresh (ExternalDatabase.refresh_interval_minutes)

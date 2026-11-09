@@ -1,0 +1,9 @@
+{
+  "name": "AIMS Linear Baseline Prediction Core",
+  "version": "1.0",
+  "license": "MIT",
+  "model": "linear_extrapolation",
+  "default_horizon_hours": 24,
+  "min_points": 3,
+  "description": "Open baseline core: ordinary least squares on recent samples, no external model files required."
+}

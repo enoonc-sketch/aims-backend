@@ -1,0 +1,14 @@
+# TLS-terminating reverse proxy for docker-compose.yml.
+# Set DOMAIN (public DNS name pointing at this host, ports 80/443 open): Caddy obtains
+# and renews a certificate automatically and redirects HTTP -> HTTPS.
+{$DOMAIN} {
+	encode zstd gzip
+	# match MAX_UPLOAD_BYTES (+ multipart overhead)
+	request_body {
+		max_size 25MB
+	}
+	reverse_proxy api:8000 {
+		# Caddy sets X-Forwarded-Proto/For itself; the app trusts them only from this peer.
+		header_up X-Real-IP {remote_host}
+	}
+}

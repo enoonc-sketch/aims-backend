@@ -1,0 +1,78 @@
+# Production-oriented stack: only the TLS proxy is published. The API and the database
+# live on a private network; there is no Adminer and no default database password.
+#
+# Required in .env (compose refuses to start without them):
+#   SECRET_KEY, POSTGRES_PASSWORD, DOMAIN
+services:
+  db:
+    build:
+      context: ./db
+    image: aims-db:latest
+    container_name: aims-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-aims}
+      POSTGRES_USER: ${POSTGRES_USER:-aims}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD to a long random value}
+      TS_TUNE_MEMORY: 1GB
+      TS_TUNE_NUM_CPUS: 2
+    command: ["postgres", "-c", "shared_preload_libraries=timescaledb"]
+    # no `ports:` — the database is reachable only from the private network
+    networks: [backend]
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-aims} -d ${POSTGRES_DB:-aims}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  api:
+    build:
+      context: .
+    image: aims-api:latest
+    container_name: aims-api
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      APP_ENV: production
+      SECRET_KEY: ${SECRET_KEY:?set SECRET_KEY (python -m app.cli gen-secret)}
+      DATABASE_URL: postgresql+psycopg2://${POSTGRES_USER:-aims}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-aims}
+      # The API is only reachable through the proxy on this private network, so its
+      # X-Forwarded-* headers can be trusted from any peer that can reach the port.
+      TRUSTED_PROXY_IPS: "*"
+      CORS_ORIGINS: ${CORS_ORIGINS:-}
+      SEED_DEMO_DATA: "false"
+    depends_on:
+      db:
+        condition: service_healthy
+    # no `ports:` and no source bind-mount / --reload
+    expose:
+      - "8000"
+    networks: [backend]
+
+  proxy:
+    image: caddy:2
+    container_name: aims-proxy
+    restart: unless-stopped
+    environment:
+      DOMAIN: ${DOMAIN:?set DOMAIN to the public host name}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - api
+    networks: [backend]
+
+networks:
+  backend:
+
+volumes:
+  pgdata:
+  caddy_data:
+  caddy_config:

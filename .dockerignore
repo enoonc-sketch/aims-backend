@@ -1,0 +1,15 @@
+__pycache__
+*.pyc
+.env
+.venv
+venv
+.git
+.pytest_cache
+tests
+README.md
+pgdata
+aims_data
+data
+*.db
+.env.*
+!.env.example

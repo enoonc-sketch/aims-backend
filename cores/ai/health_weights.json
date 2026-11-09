@@ -1,0 +1,22 @@
+{
+  "name": "AIMS Health Score Weights",
+  "version": "1.0",
+  "license": "MIT",
+  "base_score": 100,
+  "penalties": {
+    "active_alarm_warning": 5,
+    "active_alarm_critical": 15,
+    "device_status_warning": 10,
+    "device_status_fault": 25,
+    "device_status_offline": 20,
+    "low_data_availability": 8,
+    "trained_anomaly_detected": 12
+  },
+  "min_expected_points_24h": 4,
+  "factors_labels": {
+    "alarms": "Active alarms impact",
+    "status": "Device communication status",
+    "data_availability": "Recent measurement coverage",
+    "anomaly": "Trained anomaly-model verdict on recent readings"
+  }
+}
