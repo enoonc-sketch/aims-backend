@@ -91,6 +91,23 @@ async def lifespan(app: FastAPI):
         init_all_jobs()
     except Exception as e:
         logger.exception("External data scheduler init failed: %s", e)
+    if settings.PREHEAT_PANDAS:
+        # Perf opt (report item 9): warm up `import pandas` off the request
+        # path. Daemon thread, import lock makes it safe; a failure here must
+        # never break startup — the first /import request just pays the
+        # cold-import cost instead.
+        import threading
+        import time
+
+        def _preheat_pandas() -> None:
+            started = time.monotonic()
+            try:
+                import pandas  # noqa: F401
+                logger.info("pandas preheat done in %.2fs", time.monotonic() - started)
+            except Exception as e:
+                logger.warning("pandas preheat failed (first import will be slow): %s", e)
+
+        threading.Thread(target=_preheat_pandas, daemon=True, name="pandas-preheat").start()
     if FRONTEND_PATH:
         logger.info("Frontend prototype found: %s", FRONTEND_PATH)
     yield

@@ -3,7 +3,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Response, UploadFile
 from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 from starlette.concurrency import run_in_threadpool
 
 from app.api.deps import get_current_user, get_db
@@ -49,7 +49,9 @@ def list_devices(
     skip: int = SkipQuery,
     limit: int = LimitQuery(100),
 ):
-    stmt = select(Device)
+    # Eager-load components in one extra query (selectinload) instead of
+    # one lazy query per device (N+1): DeviceOut serialises components.
+    stmt = select(Device).options(selectinload(Device.components))
     if q:
         like = f"%{q}%"
         stmt = stmt.where((Device.device_code.ilike(like)) | (Device.name.ilike(like)))

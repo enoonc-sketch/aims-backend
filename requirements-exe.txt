@@ -1,5 +1,16 @@
 fastapi>=0.115.0
-uvicorn[standard]>=0.30.0
+# Perf opt (report item 11, 2026-11-09): plain uvicorn instead of
+# uvicorn[standard] — drops uvloop (~15.4MB) and httptools/watchfiles from
+# the EXE. uvicorn falls back to the asyncio loop and h11; on a single-user
+# local deployment the estimated -10-30% IO throughput is not noticeable.
+# websockets is kept explicitly: the middleware handles websocket scopes,
+# and uvicorn still needs it for WS protocol support.
+uvicorn>=0.30.0
+websockets>=12.0
+# Perf opt (report item 12, 2026-11-09): APScheduler was missing from the EXE
+# deps, so external-data auto-refresh silently did nothing in EXE mode.
+# Pinned to the same version as requirements.txt.
+apscheduler==3.10.4
 sqlalchemy>=2.0.35
 pydantic>=2.9.0
 pydantic-settings>=2.5.0

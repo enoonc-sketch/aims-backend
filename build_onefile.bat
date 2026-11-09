@@ -40,10 +40,12 @@ if not exist .venv %PYCMD% -m venv .venv
 call .venv\Scripts\activate.bat
 python -m pip install -U pip
 
-if exist requirements-exe.txt (
+if exist requirements-exe.lock (
+    pip install -r requirements-exe.lock
+) else if exist requirements-exe.txt (
     pip install -r requirements-exe.txt
 ) else (
-    pip install "fastapi" "uvicorn[standard]" "sqlalchemy" "pydantic" "pydantic-settings" "python-dotenv" "python-multipart" "httpx" "bcrypt>=4.1,<6" "defusedxml" "python-jose[cryptography]" "pandas" "openpyxl" "xlrd" "pyinstaller"
+    pip install "fastapi" "uvicorn" "websockets" "sqlalchemy" "pydantic" "pydantic-settings" "python-dotenv" "python-multipart" "httpx" "bcrypt>=4.1,<6" "defusedxml" "python-jose[cryptography]" "pandas" "openpyxl" "xlrd" "apscheduler==3.10.4" "pyinstaller"
 )
 if errorlevel 1 (
     echo [ERROR] Core pip install failed
@@ -52,6 +54,13 @@ if errorlevel 1 (
 )
 
 echo.
+REM Perf opt (report item 8): AIMS_BUILD_AI=0 skips the optional AI stack
+REM (llama / sklearn / statsmodels, ~240MB) for a ~149MB lite EXE.
+REM Default is the full build; see build_exe_lite.bat.
+if "%AIMS_BUILD_AI%"=="0" (
+    echo [Lite build] Skipping optional AI packages (AIMS_BUILD_AI=0).
+    goto SKIP_AI
+)
 echo Installing OPTIONAL local-AI packages (numpy / llama-cpp-python / statsmodels / scikit-learn)...
 echo These are optional - if this fails, the EXE still builds and runs, it
 echo just won't be able to run local GGUF models until this is fixed later
@@ -66,13 +75,9 @@ REM would silently turn "numpy>=1.26.4" into `pip install numpy` plus a stray
 REM output file literally named "=1.26.4", not an error you would notice.
 set AI_CORE_PKGS="numpy>=1.26.4" "scikit-learn>=1.5.2" "statsmodels>=0.14.2" "joblib>=1.4.2"
 set "AI_WHEEL_INDEX=https://abetlen.github.io/llama-cpp-python/whl/cpu"
-pip install --no-cache-dir --only-binary=llama-cpp-python --extra-index-url %AI_WHEEL_INDEX% "llama-cpp-python==0.3.4" %AI_CORE_PKGS%
+pip install --no-cache-dir --only-binary=llama-cpp-python --extra-index-url %AI_WHEEL_INDEX% "llama-cpp-python==0.3.2" %AI_CORE_PKGS%
 if errorlevel 1 (
-    echo       llama-cpp-python==0.3.4 has no prebuilt wheel for this Python version, trying 0.3.2 ...
-    pip install --no-cache-dir --only-binary=llama-cpp-python --extra-index-url %AI_WHEEL_INDEX% "llama-cpp-python==0.3.2" %AI_CORE_PKGS%
-)
-if errorlevel 1 (
-    echo       llama-cpp-python==0.3.2 has no prebuilt wheel either, trying 0.2.90 ...
+    echo       llama-cpp-python==0.3.2 has no prebuilt wheel for this Python version, trying 0.2.90 ...
     pip install --no-cache-dir --only-binary=llama-cpp-python --extra-index-url %AI_WHEEL_INDEX% "llama-cpp-python==0.2.90" %AI_CORE_PKGS%
 )
 if errorlevel 1 (
@@ -82,6 +87,7 @@ if errorlevel 1 (
     echo       Optional AI packages installed OK.
 )
 
+:SKIP_AI
 if not exist frontend.html (
     if exist "AIMS_?????????.html" copy /Y "AIMS_?????????.html" frontend.html >nul
 )
@@ -92,7 +98,7 @@ if not exist frontend.html (
 if exist build rmdir /s /q build
 if exist dist\AIMS-Backend.exe del /f dist\AIMS-Backend.exe
 
-pyinstaller --noconfirm --clean --onefile --console --name AIMS-Backend --add-data "frontend.html;." --add-data "cores/vendor;cores/vendor" --add-data "cores/manifest.json;cores" --hidden-import uvicorn --hidden-import fastapi --hidden-import starlette --hidden-import sqlalchemy --hidden-import pydantic --hidden-import pydantic_settings --hidden-import app --hidden-import app.main --hidden-import app.db.session --hidden-import app.db.init_db --hidden-import app.api.v1.router --hidden-import pandas --hidden-import openpyxl --hidden-import xlrd --exclude-module pgvector --exclude-module psycopg2 --exclude-module alembic --exclude-module pytest run_standalone.py
+pyinstaller --noconfirm --clean --onefile --console --name AIMS-Backend --add-data "frontend.html;." --add-data "cores/vendor;cores/vendor" --add-data "cores/manifest.json;cores" --hidden-import uvicorn --hidden-import fastapi --hidden-import starlette --hidden-import sqlalchemy --hidden-import pydantic --hidden-import pydantic_settings --hidden-import app --hidden-import app.main --hidden-import app.db.session --hidden-import app.db.init_db --hidden-import app.api.v1.router --hidden-import pandas --hidden-import openpyxl --hidden-import xlrd --exclude-module pgvector --exclude-module psycopg2 --exclude-module alembic --exclude-module watchfiles --exclude-module uvloop --exclude-module httptools --exclude-module pytest run_standalone.py
 
 if errorlevel 1 (
     echo BUILD FAILED

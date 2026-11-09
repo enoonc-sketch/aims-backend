@@ -313,6 +313,11 @@ def get_trend(
     device_id: int = Query(...),
     components: list[str] = Query(..., description="One or more component names, e.g. Nitrogen"),
     hours: int = Query(24, ge=1, le=_MAX_LOOKBACK_HOURS),
+    # Perf opt (report item 7, 2026-11-09): this endpoint previously had no
+    # row cap at all — at 1 sample/second, 24h is 86,400 rows per component.
+    # Default 5,000 points per component bounds the response; raise it
+    # explicitly (max 20,000) if a caller really needs full resolution.
+    limit: int = Query(5000, ge=1, le=20000, description="Max points returned per component"),
 ):
     """Used by the Data > Trend page and Data Analysis curve rendering."""
     if not db.get(Device, device_id):
@@ -320,6 +325,9 @@ def get_trend(
     since = datetime.now(timezone.utc) - timedelta(hours=hours)
     series: list[TrendSeries] = []
     for comp in components:
+        # Newest `limit` points, returned in chronological order: the window
+        # can hold far more rows than the cap, and the trend page cares about
+        # the recent curve, not the oldest slice of the window.
         rows = db.scalars(
             select(Measurement)
             .where(
@@ -327,8 +335,10 @@ def get_trend(
                 Measurement.component_name == comp,
                 Measurement.time >= since,
             )
-            .order_by(Measurement.time.asc())
+            .order_by(Measurement.time.desc())
+            .limit(limit)
         ).all()
+        rows = list(reversed(rows))
         series.append(
             TrendSeries(
                 component_name=comp,

@@ -16,10 +16,16 @@ router = APIRouter(prefix="/dashboard", tags=["Dashboard"])
 
 @router.get("/stats", response_model=DashboardStats)
 def get_stats(db: Session = Depends(get_db)):
-    total_devices = db.scalar(select(func.count()).select_from(Device)) or 0
-    online_devices = db.scalar(select(func.count()).where(Device.status == "online")) or 0
-    warning_devices = db.scalar(select(func.count()).where(Device.status == "warning")) or 0
-    fault_devices = db.scalar(select(func.count()).where(Device.status == "fault")) or 0
+    # One GROUP BY query instead of four per-status COUNTs (6 SQL -> 3 SQL
+    # for this endpoint; alarms + work orders are different tables).
+    status_rows = db.execute(
+        select(Device.status, func.count()).group_by(Device.status)
+    ).all()
+    status_counts = {status: n for status, n in status_rows}
+    total_devices = sum(status_counts.values())
+    online_devices = status_counts.get("online", 0)
+    warning_devices = status_counts.get("warning", 0)
+    fault_devices = status_counts.get("fault", 0)
 
     # SQLite-friendly: compare date portion via cast/string; Postgres also accepts this
     today_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)

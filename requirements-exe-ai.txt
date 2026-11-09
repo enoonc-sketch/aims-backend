@@ -16,7 +16,10 @@
 # This file is kept as a plain reference for manual/non-build-script
 # installs (e.g. `pip install -r requirements-exe-ai.txt --extra-index-url
 # https://abetlen.github.io/llama-cpp-python/whl/cpu`) and lists the same
-# primary pinned version the build scripts try first. If that version starts
+# primary pinned version the build scripts try first.
+# NOTE (2026-11-09): llama-cpp-python==0.3.4 does not exist on the
+# abetlen CPU wheel index, so it was the first attempt in every build
+# and always failed before falling back; 0.3.2 is the first try now. If that version starts
 # failing for you, check
 # https://abetlen.github.io/llama-cpp-python/whl/cpu/llama-cpp-python/
 # directly to see what's actually listed there, and either pass a different
@@ -27,7 +30,7 @@
 # versions (best coverage: 3.10/3.11/3.12). Rebuilding with one of those
 # avoids this whole class of problem.
 numpy>=1.26.4
-llama-cpp-python==0.3.4
+llama-cpp-python==0.3.2
 statsmodels>=0.14.2
 scikit-learn>=1.5.2
 joblib>=1.4.2

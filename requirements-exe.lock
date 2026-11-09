@@ -1,0 +1,70 @@
+# requirements-exe.lock — pinned EXE build dependencies (reproducible builds)
+#
+# Generated 2026-11-09 by installing requirements-exe.txt in a fresh venv
+# (Python 3.12.3, Linux) and running `pip freeze`. The same version set was
+# verified by the full pytest suite + smoke test (see CHANGES_PERF_OPT_0_5_2.md).
+# Direct deps are the packages listed in requirements-exe.txt; the rest are
+# their transitive deps at install time.
+#
+# How to use:
+#   pip install -r requirements-exe.lock        # reproducible build (CI + local)
+#   pip install -r requirements-exe.txt         # floating (>=) — only when
+#                                               # deliberately upgrading deps
+# After upgrading, re-freeze and re-run the test suite before committing a
+# new lock. Re-lock roughly quarterly so the pin does not go stale.
+# NOTE: versions were resolved on Linux cp312; all of them ship win_amd64
+# wheels too (fastapi/pandas/numpy/uvicorn stack), so the lock installs on
+# the Windows build machine / GitHub windows-latest runner as well.
+# Excluded from the freeze: pytest and its test-only deps (iniconfig, pluggy,
+# Pygments) — tests install pytest separately.
+# Update 2026-11-09 (report items 11-12): uvloop / httptools / watchfiles
+# dropped with plain uvicorn; PyYAML went with uvicorn[standard] (nothing in
+# the app imports yaml). APScheduler 3.10.4 added (with tzlocal + pytz) so the
+# EXE restores external-data auto-refresh.
+APScheduler==3.10.4
+SQLAlchemy==2.1.8
+altgraph==0.17.5
+annotated-doc==0.0.5
+annotated-types==0.8.0
+anyio==4.16.0
+bcrypt==5.0.0
+certifi==2026.10.23
+cffi==2.1.1
+click==8.5.1
+cryptography==50.0.2
+defusedxml==0.7.1
+ecdsa==0.19.2
+et_xmlfile==2.0.0
+fastapi==0.162.2
+h11==0.16.0
+httpcore==1.0.9
+httpx==0.28.1
+idna==3.20
+numpy==2.5.4
+openpyxl==3.1.5
+opentelemetry-api==1.45.2
+packaging==26.3
+pandas==3.1.1
+pyasn1==0.6.5
+pycparser==3.12
+pydantic-settings==2.16.2
+pydantic==2.14.3
+pydantic_core==2.50.4
+pyinstaller-hooks-contrib==2026.9
+pyinstaller==6.22.3
+python-dateutil==4.0.0
+python-dotenv==1.2.4
+python-jose==3.5.0
+python-multipart==0.0.33
+pytz==2026.6
+rsa==4.9.1
+setuptools==84.2.1
+six==1.17.0
+starlette==1.10.0
+typing-inspection==0.4.5
+typing_extensions==4.16.0
+tzdata==2026.6
+tzlocal==5.4.5
+uvicorn==0.54.0
+websockets==17.4
+xlrd==2.0.2
