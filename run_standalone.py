@@ -42,11 +42,6 @@ def _prepare_env(base: Path) -> None:
 
     os.environ.setdefault("DATABASE_URL", db_url)
     os.environ.setdefault("AUTO_INIT_DB", "true")
-    # Perf opt (report item 9): the standalone EXE preheats pandas in a
-    # background thread after startup — first /import drops from ~1.2s to
-    # ~0.2s, at +~0.5s startup and ~+50MB idle RSS. Override with
-    # PREHEAT_PANDAS=false in the environment.
-    os.environ.setdefault("PREHEAT_PANDAS", "true")
     # NOTE: SECRET_KEY / CORS_ORIGINS / TLS files are deliberately NOT defaulted here.
     # In development (APP_ENV != production) a missing SECRET_KEY is replaced by a random key
     # persisted next to the database, and an empty database gets a development admin

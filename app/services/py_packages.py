@@ -42,7 +42,7 @@ PACKAGES: list[dict] = [
         "description": "运行「模型下载」页下载的 GGUF 模型（聊天/向量）所需。纯 CPU 推理，兼容性最好，无需显卡。",
         "description_en": "Needed to run GGUF models downloaded in the Models tab. Pure CPU inference — works everywhere, no GPU needed.",
         "import_name": "llama_cpp",
-        "versions": ["0.3.4", "0.3.2", "0.2.90"],
+        "versions": ["0.3.2", "0.2.90"],
         "extra_index_url": "https://abetlen.github.io/llama-cpp-python/whl/cpu",
         "only_binary": True,
     },

@@ -76,11 +76,11 @@ if errorlevel 1 (
 )
 
 echo.
-REM Perf opt (report item 8): AIMS_BUILD_AI=0 skips the optional AI stack
-REM (llama / sklearn / statsmodels, ~240MB) for a ~149MB lite EXE.
-REM Default is the full build; see build_exe_lite.bat.
-if "%AIMS_BUILD_AI%"=="0" (
-    echo [Lite build] Skipping optional AI packages (AIMS_BUILD_AI=0).
+REM Perf opt (report item 8): the optional AI stack (llama / sklearn / statsmodels,
+REM ~240MB) is installed ONLY when AIMS_BUILD_AI=1 (full build). Unset / 0 / empty =
+REM lite build (~149MB). build_exe_lite.bat is the one-click lite entry.
+if not "%AIMS_BUILD_AI%"=="1" (
+    echo [Lite build] Skipping optional AI packages (set AIMS_BUILD_AI=1 for the full build).
     goto SKIP_AI
 )
 echo Installing OPTIONAL local-AI packages (numpy / llama-cpp-python / statsmodels / scikit-learn)...

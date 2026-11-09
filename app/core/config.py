@@ -115,15 +115,6 @@ class Settings(BaseSettings):
 
     AUTO_INIT_DB: bool = True
 
-    # Perf opt (report item 9, 2026-11-09): warm up `import pandas` in a
-    # background thread right after startup, so the first /import request
-    # does not pay the ~1.2s cold import (it drops to ~0.2s). Cost: startup
-    # +~0.5s and ~+50MB idle RSS. Default off everywhere except the
-    # standalone EXE, where run_standalone.py turns it on (startup there is
-    # already ~8s, so +0.5s is negligible and first-import responsiveness
-    # matters more). Set PREHEAT_PANDAS=false to disable.
-    PREHEAT_PANDAS: bool = False
-
     AI_PROVIDER: str = "openai"
     AI_API_KEY: str = ""
     AI_API_BASE: str = "https://api.openai.com/v1"

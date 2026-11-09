@@ -146,6 +146,11 @@ hiddenimports = [
     "statsmodels",
     "statsmodels.tsa.holtwinters",
     "joblib",
+    # external-data auto-refresh (app/services/external_scheduler.py): imported only
+    # inside functions, so declare explicitly or a refactor could drop it from the EXE.
+    "apscheduler",
+    "apscheduler.schedulers.background",
+    "apscheduler.triggers.interval",
     # pandas + its Excel engines: every /import endpoint (measurements, devices,
     # gateways, assets, work orders, lab samples, knowledge docs, analysis) and
     # every /import/template download go through app/services/table_import.py,
@@ -205,13 +210,6 @@ a = Analysis(
     noarchive=False,
 )
 
-# Perf opt (report item 10, 2026-11-09): UPX is OFF by default — it saves
-# an estimated 30-40% of EXE size but raises antivirus false-positive rates,
-# and the spec's own comment warned about that. Opt in only with
-# AIMS_UPX=1 (and UPX installed on the build machine; if PyInstaller cannot
-# find the upx binary it logs a warning and builds uncompressed).
-_UPX = os.environ.get("AIMS_UPX", "0") == "1"
-
 pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
 
 # onedir is more reliable than onefile on Windows (less antivirus false-positive)
@@ -224,7 +222,7 @@ exe = EXE(
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
-    upx=_UPX,
+    upx=False,
     console=True,
     disable_windowed_traceback=False,
 )
@@ -235,7 +233,7 @@ coll = COLLECT(
     a.zipfiles,
     a.datas,
     strip=False,
-    upx=_UPX,
+    upx=False,
     upx_exclude=[],
     name="AIMS-Backend",
 )

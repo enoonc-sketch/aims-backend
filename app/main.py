@@ -91,23 +91,6 @@ async def lifespan(app: FastAPI):
         init_all_jobs()
     except Exception as e:
         logger.exception("External data scheduler init failed: %s", e)
-    if settings.PREHEAT_PANDAS:
-        # Perf opt (report item 9): warm up `import pandas` off the request
-        # path. Daemon thread, import lock makes it safe; a failure here must
-        # never break startup — the first /import request just pays the
-        # cold-import cost instead.
-        import threading
-        import time
-
-        def _preheat_pandas() -> None:
-            started = time.monotonic()
-            try:
-                import pandas  # noqa: F401
-                logger.info("pandas preheat done in %.2fs", time.monotonic() - started)
-            except Exception as e:
-                logger.warning("pandas preheat failed (first import will be slow): %s", e)
-
-        threading.Thread(target=_preheat_pandas, daemon=True, name="pandas-preheat").start()
     if FRONTEND_PATH:
         logger.info("Frontend prototype found: %s", FRONTEND_PATH)
     yield
@@ -116,7 +99,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title=settings.APP_NAME,
     description="Industrial Analyzer Smart O&M Platform — backend API",
-    version="0.5.2",
+    version="0.5.3",
     lifespan=lifespan,
     # API docs are off in production unless ENABLE_DOCS=true
     docs_url="/docs" if settings.docs_enabled else None,
@@ -179,11 +162,11 @@ if CORES_DIR is not None:
 def health_check():
     if settings.is_production:
         # no environment / filesystem details on an unauthenticated endpoint
-        return {"status": "ok", "version": "0.5.2"}
+        return {"status": "ok", "version": "0.5.3"}
     return {
         "status": "ok",
         "app": settings.APP_NAME,
-        "version": "0.5.2",
+        "version": "0.5.3",
         "env": settings.APP_ENV,
         "database": "sqlite" if settings.is_sqlite else "postgresql",
         "frontend": str(FRONTEND_PATH) if FRONTEND_PATH else None,
