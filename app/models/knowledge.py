@@ -8,13 +8,32 @@ from sqlalchemy import Column, DateTime, ForeignKey, Integer, String, Text, JSON
 from app.core.config import settings
 from app.db.base import Base
 
-EmbeddingType = JSON  # safe default for EXE / SQLite
-if not settings.is_sqlite:
+def _embedding_type():
+    """pgvector `vector(N)` when available, JSON otherwise.
+
+    EMBEDDING_STORAGE lets an installation opt out explicitly: the Windows offline
+    build ships PostgreSQL binaries and compiles pgvector next to them, but if that
+    extension cannot be built on a given build machine the installer sets
+    EMBEDDING_STORAGE=json so a PostgreSQL install still starts — knowledge-base
+    retrieval then uses the same application-side cosine path as SQLite, instead of
+    failing at CREATE TABLE time with "type vector does not exist".
+    """
+    if settings.is_sqlite:
+        return JSON
+    mode = (getattr(settings, "EMBEDDING_STORAGE", "auto") or "auto").strip().lower()
+    if mode == "json":
+        return JSON
     try:
         from pgvector.sqlalchemy import Vector
-        EmbeddingType = Vector(settings.AI_EMBEDDING_DIM)
+
+        return Vector(settings.AI_EMBEDDING_DIM)
     except Exception:
-        EmbeddingType = JSON
+        if mode == "vector":
+            raise
+        return JSON
+
+
+EmbeddingType = _embedding_type()
 
 
 class KnowledgeDocument(Base):

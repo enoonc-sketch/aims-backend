@@ -22,9 +22,88 @@ from pathlib import Path
 
 
 def _base_dir() -> Path:
+    # AIMS_ROOT wins over the executable location: it is what the installer, the
+    # launcher and the ops scripts all set, and what makes the whole tree relocatable
+    # (a support engineer can point at a copy of an installation without touching it).
+    override = os.environ.get("AIMS_ROOT")
+    if override:
+        return Path(override).expanduser().resolve()
     if getattr(sys, "frozen", False):
         return Path(sys.executable).resolve().parent
     return Path(__file__).resolve().parent
+
+
+def _bundled_pg(base: Path) -> bool:
+    """Is this a managed install with its own PostgreSQL under <base>/pgsql/bin?
+
+    Cheap test (no imports) because it decides which database the whole process
+    uses: bundled PostgreSQL (offline installer) or the legacy SQLite file.
+    """
+    if os.environ.get("AIMS_MANAGED_RUNTIME", "").strip().lower() in ("0", "false", "no", "off"):
+        return False
+    if os.environ.get("AIMS_DB_MODE", "").strip().lower() in ("sqlite", "external"):
+        return False
+    exe = "pg_ctl.exe" if os.name == "nt" else "pg_ctl"
+    bindir = os.environ.get("AIMS_PG_BINDIR")
+    if bindir:
+        return (Path(bindir).expanduser() / exe).is_file()
+    return (base / "pgsql" / "bin" / exe).is_file()
+
+
+def _pid_alive(pid: int) -> bool:
+    if pid <= 0:
+        return False
+    if os.name == "nt":
+        try:
+            import ctypes
+
+            handle = ctypes.windll.kernel32.OpenProcess(0x1000, False, pid)
+            if not handle:
+                return False
+            try:
+                code = ctypes.c_ulong()
+                if not ctypes.windll.kernel32.GetExitCodeProcess(handle, ctypes.byref(code)):
+                    return False
+                return code.value == 259  # STILL_ACTIVE
+            finally:
+                ctypes.windll.kernel32.CloseHandle(handle)
+        except Exception:
+            return True
+    try:
+        os.kill(pid, 0)
+        return True
+    except ProcessLookupError:
+        return False
+    except OSError:
+        return True
+
+
+def _watch_parent(server) -> None:
+    """启动器死了，后端必须跟着退 —— 否则会留下占着 8000 端口的孤儿进程。
+
+    正常退出走托盘菜单，会显式通知本进程关停；这条兜底路径针对的是启动器被
+    任务管理器结束、被安装程序强杀、或自身崩溃的情况。父进程一消失，这里就让
+    uvicorn 正常关停（关连接池、写日志），而不是让用户下次启动时看到
+    "端口被占用"却找不到是谁占的。
+    """
+    raw = os.environ.get("AIMS_PARENT_PID", "").strip()
+    if not raw.isdigit():
+        return
+    parent = int(raw)
+    if parent <= 0 or not _pid_alive(parent):
+        return
+
+    def loop() -> None:
+        import time as _t
+
+        while True:
+            _t.sleep(3.0)
+            if not _pid_alive(parent):
+                print(f"启动器 (PID {parent}) 已退出，AIMS 后端随之关闭。", flush=True)
+                server.should_exit = True
+                return
+
+    threading.Thread(target=loop, name="aims-parent-watchdog", daemon=True).start()
 
 
 def _prepare_env(base: Path) -> None:
@@ -41,10 +120,13 @@ def _prepare_env(base: Path) -> None:
 
     data_dir = base / "aims_data"
     data_dir.mkdir(parents=True, exist_ok=True)
-    db_file = data_dir / "aims.db"
-    db_url = "sqlite:///" + db_file.resolve().as_posix()
 
-    os.environ.setdefault("DATABASE_URL", db_url)
+    # Managed install: config/aims.env supplies DATABASE_URL etc. (applied in
+    # _bootstrap_managed below). Only the legacy SQLite build defaults to a file.
+    if not _bundled_pg(base):
+        db_file = data_dir / "aims.db"
+        db_url = "sqlite:///" + db_file.resolve().as_posix()
+        os.environ.setdefault("DATABASE_URL", db_url)
     os.environ.setdefault("AUTO_INIT_DB", "true")
     # NOTE: SECRET_KEY / CORS_ORIGINS / TLS files are deliberately NOT defaulted here.
     # In development (APP_ENV != production) a missing SECRET_KEY is replaced by a random key
@@ -53,6 +135,16 @@ def _prepare_env(base: Path) -> None:
     # CORS is never enabled.
     os.environ.setdefault("HOST", "127.0.0.1")
     os.environ.setdefault("PORT", "8000")
+
+
+def _bootstrap_managed(base: Path):
+    """Start the bundled PostgreSQL + reconcile the schema. Returns info or None."""
+    if not _bundled_pg(base):
+        return None
+    from app.deploy import runtime
+
+    return runtime.bootstrap(base, announce=lambda msg: print(msg, flush=True))
+
 
 
 def _pause(msg: str = "Press Enter to exit...") -> None:
@@ -385,6 +477,17 @@ def _probe_health(base_url: str, scheme: str, timeout: float = 0.5):
 
 def main() -> int:
     base = _base_dir()
+
+    # `AIMS-Backend.exe deploy <cmd>` — installer / operations CLI. Handled before
+    # _prepare_env so it can drive the cluster without the app's defaults in the way.
+    if len(sys.argv) > 1 and sys.argv[1] == "deploy":
+        os.chdir(base)
+        for p in ({str(base), str(getattr(sys, "_MEIPASS", ""))} - {""}):
+            if p not in sys.path:
+                sys.path.insert(0, p)
+        from app.deploy.cli import main as deploy_main
+        return deploy_main(sys.argv[2:])
+
     _prepare_env(base)
 
     # 子命令(不启动服务): setup 向导 / 用户管理 / 生成密钥。
@@ -398,6 +501,10 @@ def main() -> int:
             import secrets
             print(secrets.token_urlsafe(64))
             return 0
+        if cmd in ("backups", "restore") and _bundled_pg(base):
+            # Managed install: backups are pg_dump archives, handled by app/deploy.
+            from app.deploy.cli import main as deploy_main
+            return deploy_main([cmd] + sys.argv[2:])
         if cmd == "backups":
             items = _list_backups()
             if not items:
@@ -414,8 +521,39 @@ def main() -> int:
     print("=" * 60)
     print("  AIMS Backend — starting...")
     print(f"  Base dir : {base}")
-    print(f"  Database : {os.environ.get('DATABASE_URL')}")
     print("=" * 60)
+    print()
+
+    # Bundled PostgreSQL: start it and bring the schema up to date before the app
+    # imports (Settings reads DATABASE_URL at import time).
+    runtime_info = None
+    try:
+        runtime_info = _bootstrap_managed(base)
+    except Exception as exc:  # noqa: BLE001  (DeploymentError carries the user-facing text)
+        print("\n" + "!" * 60)
+        print("  数据库启动失败 — AIMS 无法运行")
+        print("!" * 60)
+        print(str(exc))
+        detail = ""
+        try:
+            from app.deploy import runtime as rt
+            from app.deploy.paths import load_layout
+
+            detail = rt.diagnostic_tail(load_layout(base))
+        except Exception:
+            pass
+        if detail:
+            print("\n最近的日志：\n" + detail)
+        if os.name == "nt":
+            try:
+                from app.deploy import runtime as rt
+
+                rt.show_error("AIMS Backend — 数据库启动失败", str(exc))
+            except Exception:
+                pass
+        return 3
+
+    print(f"  Database : {os.environ.get('DATABASE_URL')}")
     print()
 
     try:
@@ -490,6 +628,7 @@ def main() -> int:
         # (Same pattern as the sing-box generator, app.py:279.)
         server_thread = threading.Thread(target=server.run, daemon=True)
         server_thread.start()
+        _watch_parent(server)
 
         # Wait until the server really answers /health (max 15 s, no proxy:
         # a system proxy would break localhost). Same pattern as sing-box
@@ -532,6 +671,14 @@ def main() -> int:
         # Window was closed, or the wait loop ended: stop the server.
         server.should_exit = True
         server_thread.join(timeout=5)
+        if runtime_info and runtime_info.get("managed"):
+            # Only stops PostgreSQL in process mode (service-mode clusters stay up).
+            try:
+                from app.deploy import runtime as rt
+
+                rt.shutdown(base, started_here=bool(runtime_info.get("started_here")))
+            except Exception:
+                pass
         return 0
 
     except KeyboardInterrupt:

@@ -121,6 +121,13 @@ class Settings(BaseSettings):
     AI_CHAT_MODEL: str = "gpt-4o-mini"
     AI_EMBEDDING_MODEL: str = "text-embedding-3-small"
     AI_EMBEDDING_DIM: int = 1536
+    # How knowledge_chunks.embedding is stored on PostgreSQL:
+    #   auto   -> pgvector `vector(N)` when the package is importable (Docker/production default)
+    #   vector -> force pgvector (fails loudly if it is missing)
+    #   json   -> force JSON, for a PostgreSQL build without the pgvector extension
+    #             (the Windows offline installer sets this when vector.so could not be
+    #             built; retrieval then uses the application-side cosine path)
+    EMBEDDING_STORAGE: str = "auto"
 
     # --- Local / offline model runtime (real GGUF models via llama.cpp) ---
     MODELS_DIR: str = "cores/models"
@@ -244,6 +251,8 @@ class Settings(BaseSettings):
             raise ValueError("REFRESH_TOKEN_EXPIRE_DAYS must be between 1 and 90")
         if self.LOGIN_MAX_FAILURES < 1 or self.LOGIN_MAX_FAILURES_PER_IP < 1 or self.LOGIN_LOCKOUT_MINUTES < 1:
             raise ValueError("Login throttling limits must be positive")
+        if str(self.EMBEDDING_STORAGE).strip().lower() not in {"auto", "vector", "json"}:
+            raise ValueError("EMBEDDING_STORAGE must be one of: auto, vector, json")
 
         # --- Production transport requirements ---
         if self.is_production:

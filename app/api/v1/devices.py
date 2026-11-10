@@ -3,6 +3,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Response, UploadFile
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 from starlette.concurrency import run_in_threadpool
 
@@ -95,11 +96,26 @@ def update_device(device_id: int, payload: DeviceUpdate, db: Session = Depends(g
 
 @router.delete("/{device_id}", status_code=204)
 def delete_device(device_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    """删除设备。
+
+    设备被资产台账、工单、测点等业务数据引用时，数据库会用外键拦住删除。
+    这属于"正常的业务冲突"，不是服务器故障 —— 以前这里直接把外键错误抛成
+    500，前端只显示"服务器内部错误"，现场只能靠翻日志才能知道原因。
+    现在返回 409 并把"被谁引用"说清楚，让人知道下一步该怎么做。
+    """
     device = db.get(Device, device_id)
     if not device:
         raise HTTPException(status_code=404, detail="Device not found")
-    db.delete(device)
-    db.commit()
+    try:
+        db.delete(device)
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail=("该设备已被其它业务数据引用（资产台账、工单、测点或报警等），不能直接删除。"
+                    "请先解除关联，或在资产管理里把资产改挂到其它设备后再删除。"),
+        ) from None
 
 
 @router.get("/{device_id}/components", response_model=list[dict])

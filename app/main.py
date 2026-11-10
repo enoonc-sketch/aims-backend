@@ -30,6 +30,11 @@ def _find_frontend() -> Path | None:
         candidates.append(Path(sys.executable).parent)
         if hasattr(sys, "_MEIPASS"):
             candidates.append(Path(sys._MEIPASS))
+    # AIMS_ROOT identifies the installation whose frontend.html the installer shipped;
+    # without it a relocated/side-by-side tree would serve a stale UI from the repo.
+    import os as _os
+    if _os.environ.get("AIMS_ROOT"):
+        candidates.append(Path(_os.environ["AIMS_ROOT"]).expanduser())
     candidates.append(Path(__file__).resolve().parent.parent)  # project root
     candidates.append(Path.cwd())
     for base in candidates:
@@ -118,7 +123,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title=settings.APP_NAME,
     description="Industrial Analyzer Smart O&M Platform — backend API",
-    version="0.5.9",
+    version="0.5.10",
     lifespan=lifespan,
     # API docs are off in production unless ENABLE_DOCS=true
     docs_url="/docs" if settings.docs_enabled else None,
@@ -181,11 +186,11 @@ if CORES_DIR is not None:
 def health_check():
     if settings.is_production:
         # no environment / filesystem details on an unauthenticated endpoint
-        return {"status": "ok", "version": "0.5.9"}
+        return {"status": "ok", "version": "0.5.10"}
     return {
         "status": "ok",
         "app": settings.APP_NAME,
-        "version": "0.5.9",
+        "version": "0.5.10",
         "env": settings.APP_ENV,
         "database": "sqlite" if settings.is_sqlite else "postgresql",
         "frontend": str(FRONTEND_PATH) if FRONTEND_PATH else None,

@@ -176,6 +176,21 @@ hiddenimports += [
     'pythonnet',
 ]
 
+# 本地部署层（安装/升级/备份/恢复/自检/桌面启动器）：
+# 这些模块由 `deploy` 子命令和 launcher 延迟导入（运行时按需 import），
+# PyInstaller 的静态分析看不到，必须显式收集，否则装完的 EXE 里
+# `AIMS-Backend.exe deploy provision` 会直接 ModuleNotFoundError。
+hiddenimports += collect_submodules('app.deploy')
+hiddenimports += collect_submodules('app.launcher')
+hiddenimports += [
+    'psycopg2',
+    'psycopg2.extensions',
+    'pgvector.sqlalchemy',
+    'pystray',
+    'PIL.Image',
+    'PIL.ImageDraw',
+]
+
 a = Analysis(
     ["run_standalone.py"],
     pathex=["."],

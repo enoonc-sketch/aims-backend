@@ -1,0 +1,106 @@
+AIMS 设备智能运维系统 — 第三方组件许可声明
+================================================================================
+版本：0.5.10
+本文件随安装包分发，位于 <安装目录>\docs\LICENSES.txt。
+完整依赖清单见 docs\依赖与许可证清单.md。
+
+本产品包含以下开源/第三方组件。各组件的版权归其各自作者所有，本产品仅在其
+许可证允许的范围内分发。若某组件要求随分发提供完整许可证文本，请见本文件末尾
+"许可证全文获取"一节。
+
+
+1. PostgreSQL（数据库管理系统）
+--------------------------------------------------------------------------------
+版权：Copyright (c) 1996-2024, PostgreSQL Global Development Group
+      Copyright (c) 1994, The Regents of the University of California
+许可证：PostgreSQL License（类 BSD 双条款）
+允许以源码或二进制形式再分发，前提是保留上述版权声明、条件与免责声明。
+
+2. pgvector（向量类型与相似度索引）
+--------------------------------------------------------------------------------
+版权：Copyright (c) 2021 Andrew Kane
+许可证：PostgreSQL License
+
+3. pg_trgm（三元组模糊匹配，随 PostgreSQL contrib 分发）
+--------------------------------------------------------------------------------
+许可证：PostgreSQL License
+
+4. FastAPI / Starlette / Uvicorn / Pydantic / SQLAlchemy / APScheduler / httpx
+   / python-dotenv / openpyxl / xlrd / joblib / python-jose
+--------------------------------------------------------------------------------
+许可证：MIT 或 BSD-3-Clause（逐组件见依赖清单）
+允许商业使用、修改、再分发，需保留版权声明与许可证文本。
+
+5. NumPy / pandas / scikit-learn / statsmodels
+--------------------------------------------------------------------------------
+许可证：BSD-3-Clause
+允许再分发，需保留版权声明、条件与免责声明。
+
+6. psycopg2-binary（PostgreSQL 驱动）
+--------------------------------------------------------------------------------
+版权：Copyright (c) 2001-2024, Federico Di Gregorio and the psycopg development team
+许可证：GNU Lesser General Public License v3.0（LGPL-3.0），附 OpenSSL 链接例外
+分发方式：以未修改的动态链接库形式随包分发。
+  · 本产品未修改 psycopg2 源码；
+  · 你可依据 LGPL-3.0 第 4 条，用自己编译的同版本库替换安装目录中的
+    psycopg2 二进制文件，产品仍可正常工作；
+  · 源码获取：https://www.psycopg.org/psycopg2/ 或 https://pypi.org/project/psycopg2-binary/
+
+7. bcrypt / cryptography / cffi / pycparser
+--------------------------------------------------------------------------------
+许可证：Apache-2.0（bcrypt）、Apache-2.0 或 BSD-3-Clause（cryptography）、MIT（cffi、pycparser）
+
+8. llama.cpp / llama-cpp-python（本地 AI 推理）
+--------------------------------------------------------------------------------
+版权：Copyright (c) 2023-2024 The ggml authors / Andrei Betlen
+许可证：MIT
+
+9. SheetJS (xlsx) / Chart.js / chartjs-adapter-date-fns（前端，本地文件）
+--------------------------------------------------------------------------------
+许可证：Apache-2.0（SheetJS）、MIT（Chart.js、chartjs-adapter-date-fns）
+分发方式：以未修改的压缩 JS 文件形式存放于 <安装目录>\cores\vendor\
+
+10. pywebview / pythonnet / clr_loader（可选内嵌窗口组件）
+--------------------------------------------------------------------------------
+许可证：BSD-3-Clause / MIT / MIT
+
+11. Python 运行时（由 PyInstaller 打包进 EXE）
+--------------------------------------------------------------------------------
+版权：Copyright (c) Python Software Foundation
+许可证：PSF License Agreement
+
+12. PyInstaller（打包工具，仅构建期）
+--------------------------------------------------------------------------------
+许可证：GPL-2.0 及 Bootloader Exception
+说明：Bootloader Exception 明确允许将打包产物以任意许可证分发；本项目未修改
+      PyInstaller 的 bootloader 源码。
+
+13. Inno Setup（安装程序生成器，仅构建期）
+--------------------------------------------------------------------------------
+许可证：Inno Setup License
+说明：允许自由分发由它生成的安装程序，无版税、无需公开安装脚本。
+
+14. AI 模型（可选，若随包分发）
+--------------------------------------------------------------------------------
+Qwen2.5-0.5B-Instruct（GGUF）：Apache-2.0
+BGE-small-zh-v1.5（GGUF）：MIT
+模型文件是否随包分发由项目/客户决定；未包含模型时，AI 问答自动使用内置规则引擎。
+
+
+许可证全文获取
+--------------------------------------------------------------------------------
+上述 MIT / BSD / Apache-2.0 / PostgreSQL / LGPL 许可证全文，可从以下位置获取：
+  · https://opensource.org/licenses/MIT
+  · https://opensource.org/licenses/BSD-3-Clause
+  · https://www.apache.org/licenses/LICENSE-2.0
+  · https://www.postgresql.org/about/licence/
+  · https://www.gnu.org/licenses/lgpl-3.0.html
+  · https://www.python.org/psf/license/
+也可向供应商索取打印版。若本文件与组件自带许可证文本冲突，以组件自带文本为准。
+
+
+免责声明
+--------------------------------------------------------------------------------
+本产品按"现状"提供，不附带任何明示或暗示的担保，包括但不限于适销性与特定用途
+适用性的担保。在任何情况下，作者或版权持有人均不对任何索赔、损害或其它责任负责，
+无论是在合同、侵权或其它方面产生的，还是与软件或软件的使用或其它交易有关的。

@@ -67,38 +67,27 @@ def _ensure_sqlite_knowledge_fts(engine) -> None:
 
 
 def _ensure_postgres_extras(engine) -> None:
-    """Postgres/TimescaleDB-only setup that plain `Base.metadata.create_all()`
-    cannot express: converting `measurements` into a TimescaleDB hypertable,
-    and the pgvector ivfflat similarity index on `knowledge_chunks.embedding`.
+    """Postgres-only objects that plain `Base.metadata.create_all()` cannot express.
 
-    This used to live in a hand-maintained `db/init/01_schema.sql`, duplicating
-    every table/column already declared on the ORM models — the two drifted
-    (device_components.gateway_id/tag_address existed on the model but not in
-    that SQL file). ORM models + Alembic migrations are now the single source
-    of truth for all table/column/plain-index DDL on every backend; this
-    function only adds the handful of things that are genuinely Postgres-only
-    and have no portable SQLAlchemy equivalent, and it runs *after*
-    create_all() so the tables it operates on already exist.
-
-    Safe to call repeatedly (idempotent), and swallows errors the same way
-    `_ensure_sqlite_knowledge_fts` does, so an environment without TimescaleDB
-    or pgvector installed can't take down startup — it just runs as plain
-    Postgres tables instead.
+    TimescaleDB hypertable + pgvector ivfflat index live in app/deploy/schema.py,
+    which (a) checks whether each extension is actually installed, (b) falls back
+    to a BRIN index on `measurements.time` when TimescaleDB is absent, and (c) is
+    also what the installer/launcher run before the app starts. Doing the same work
+    here again with blind SQL produced a scary traceback in every log on every
+    start of a Windows install (no TimescaleDB build exists for Windows) while the
+    app was in fact completely healthy — so this now delegates instead of guessing.
     """
     try:
-        with engine.begin() as conn:
-            conn.execute(text("SELECT create_hypertable('measurements', 'time', if_not_exists => TRUE)"))
-    except Exception:
-        logger.warning("Could not convert 'measurements' into a TimescaleDB hypertable (extension missing?).", exc_info=True)
+        from app.deploy.schema import ensure_postgres_extras
 
-    try:
-        with engine.begin() as conn:
-            conn.execute(text(
-                "CREATE INDEX IF NOT EXISTS idx_knowledge_chunks_embedding "
-                "ON knowledge_chunks USING ivfflat (embedding vector_cosine_ops) WITH (lists = 100)"
-            ))
+        report = ensure_postgres_extras(engine)
+        if report.get("notes"):
+            logger.info("Postgres extras: %s", "; ".join(report["notes"]))
+        else:
+            logger.info("Postgres extras ready (hypertable=%s vector_index=%s brin=%s)",
+                        report.get("hypertable"), report.get("vector_index"), report.get("brin_index"))
     except Exception:
-        logger.warning("Could not create pgvector ivfflat index on knowledge_chunks.embedding (pgvector missing?).", exc_info=True)
+        logger.warning("Could not apply Postgres extras (continuing with plain tables).", exc_info=True)
 
 
 def _ensure_sqlite_measurement_import_columns(engine) -> None:
