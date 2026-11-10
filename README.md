@@ -239,14 +239,6 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000
 - 若需要完整时序分析 + 向量 RAG，请继续使用 Docker Compose 的 PostgreSQL 方案。
 - 打包请在 **Windows** 机器上执行 `build_exe.bat`（跨平台交叉编译不推荐）。
 
-### 桌面版与安装包（0.5.4 起）
-
-以本节为准；上面"运行 EXE"里"自动打开浏览器"是 0.5.3 及以前的行为。
-
-- 双击 `AIMS-Backend.exe` 打开的是**桌面窗口**（内嵌 `/ui` 界面），不再跳转到系统浏览器；关闭窗口即停止服务、退出程序。窗口需要系统里的 WebView2 Runtime（Windows 11 自带，Windows 10 通常随 Edge 更新已有）；没有它、或窗口打不开时，程序自动回退到系统浏览器，服务照常运行。
-- 以下情况同样走浏览器：开启 TLS（自签名证书在窗口里无法点击放行）、从源码运行 `python run_standalone.py`。设置环境变量 `AIMS_OPEN_BROWSER=0` 则什么都不打开，只跑服务（无头 / 远程用法）。
-- 运行 `build_installer.bat` 打 Windows 安装包：先打出 `dist\AIMS-Backend`，再用 Inno Setup 6 编译 `installer\AIMS-Backend.iss`，得到 `installer_output\AIMS-Backend-Setup.exe`（需先装 Inno Setup 6：<https://jrsoftware.org/isdl.php>）。安装包默认装到 `%LOCALAPPDATA%\AIMS Backend`，数据目录 `aims_data` 仍在程序目录内，卸载不会删除它。GitHub Actions 的 workflow 也会同时产出 `AIMS-Backend-Setup`。
-
 ---
 
 ## v0.3 继续完善内容
@@ -366,6 +358,16 @@ EXE 仅使用 SQLite，不依赖 Docker / PostgreSQL。
 
 
 ---
+
+## 桌面版与安装包（0.5.4）
+
+- 双击 `AIMS-Backend.exe` 打开的是**桌面窗口**（pywebview 内嵌 `/ui`），不再跳到系统浏览器；关闭窗口即停止服务、退出进程。控制台窗口仍会保留，用来显示启动报错和日志。
+- 没有 WebView2 Runtime（Windows 11 自带，Windows 10 通常随 Edge 更新带上）、开了 TLS（`SSL_CERTFILE` / `HTTPS_REQUIRED`）、或从源码运行 `python run_standalone.py` 时，会回退到系统浏览器；`AIMS_OPEN_BROWSER=0` 则什么都不打开、只跑服务。
+- 运行 `build_installer.bat` 打 Windows 安装包：先调用 `build_exe.bat`，再用 Inno Setup 6（<https://jrsoftware.org/isdl.php>，或 `choco install innosetup`）编译 `installer\AIMS-Backend.iss`，产出 `installer_output\AIMS-Backend-Setup.exe`。按电脑安装（所有用户可用）：需要管理员权限，默认装到 `C:\Program Files\AIMS Backend`；数据目录 `aims_data`、`data`、`cores\models` 在安装目录内，安装包已授予普通用户读写权限，卸载时不会被删除。同一台电脑上的所有 Windows 用户共用这份数据。
+- 重复双击不会再起第二个服务：检测到本机端口上已有 AIMS 在运行时，只会再开一个窗口连到它；端口被其他程序占用时会立刻报错并保持控制台打开（改 `.env` 里的 `PORT` 即可）。
+- 程序图标取自 `assets/aims-logo.png`：`assets/aims.ico` 用于 EXE、桌面窗口、快捷方式和安装包。换图标时替换 `assets/aims.ico` 即可。
+- 数据安全：启动时自动备份数据库到 `aims_data\backups\`（12 小时内最多一份，保留最近 7 份，`AIMS_BACKUP_KEEP=0` 关闭）；日志同时写入 `aims_data\logs\aims.log`（2MB × 3 轮转，`AIMS_LOG_FILE=0` 关闭）。恢复备份：先关闭程序，再在安装目录里运行 `AIMS-Backend.exe backups`（列出备份）和 `AIMS-Backend.exe restore`（恢复最新一份；`restore aims-时间戳.db` 恢复指定的一份）。恢复前会校验备份并把当前数据库另存为 `backups\pre-restore-时间戳.db`；程序还在运行时会拒绝恢复。
+- 默认构建是轻量版（不含 AI 栈）；完整版请先 `set AIMS_BUILD_AI=1` 再构建。
 
 ## 数据分析开源 CORES（EXE 构建时自动下载）
 

@@ -45,6 +45,25 @@ def _find_frontend() -> Path | None:
 
 FRONTEND_PATH = _find_frontend()
 
+
+def _find_icon() -> Path | None:
+    """assets/aims.ico (tab / window icon). Optional: Docker images may not ship it."""
+    import sys
+    candidates = []
+    if getattr(sys, "frozen", False):
+        if hasattr(sys, "_MEIPASS"):
+            candidates.append(Path(sys._MEIPASS) / "assets")
+        candidates.append(Path(sys.executable).parent / "assets")
+    candidates.append(Path(__file__).resolve().parent.parent / "assets")
+    for d in candidates:
+        p = d / "aims.ico"
+        if p.is_file():
+            return p
+    return None
+
+
+ICON_PATH = _find_icon()
+
 def _find_cores_dir() -> Path | None:
     import sys
     candidates = []
@@ -99,7 +118,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title=settings.APP_NAME,
     description="Industrial Analyzer Smart O&M Platform — backend API",
-    version="0.5.5",
+    version="0.5.9",
     lifespan=lifespan,
     # API docs are off in production unless ENABLE_DOCS=true
     docs_url="/docs" if settings.docs_enabled else None,
@@ -162,11 +181,11 @@ if CORES_DIR is not None:
 def health_check():
     if settings.is_production:
         # no environment / filesystem details on an unauthenticated endpoint
-        return {"status": "ok", "version": "0.5.5"}
+        return {"status": "ok", "version": "0.5.9"}
     return {
         "status": "ok",
         "app": settings.APP_NAME,
-        "version": "0.5.5",
+        "version": "0.5.9",
         "env": settings.APP_ENV,
         "database": "sqlite" if settings.is_sqlite else "postgresql",
         "frontend": str(FRONTEND_PATH) if FRONTEND_PATH else None,
@@ -185,6 +204,14 @@ def root():
     if settings.docs_enabled:
         body["docs"] = "/docs"
     return body
+
+
+@app.get("/favicon.ico", include_in_schema=False)
+def favicon():
+    from fastapi.responses import JSONResponse
+    if ICON_PATH is None:
+        return JSONResponse(status_code=404, content={"detail": "no icon"})
+    return FileResponse(ICON_PATH, media_type="image/x-icon", headers={"Cache-Control": "public, max-age=86400"})
 
 
 @app.get("/ui", tags=["System"], include_in_schema=False)

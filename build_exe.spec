@@ -11,6 +11,9 @@ datas = []
 for name in ("frontend.html",):
     if os.path.isfile(name):
         datas.append((name, "."))
+# Tab / window icon served at /favicon.ico
+if os.path.isfile("assets/aims.ico"):
+    datas.append(("assets/aims.ico", "assets"))
 # Bundle the manifest so /api/v1/ai/cores can list downloadable models in the EXE too
 if os.path.isfile("cores/manifest.json"):
     datas.append(("cores/manifest.json", "cores"))
@@ -37,14 +40,6 @@ datas += collect_data_files("llama_cpp")
 
 # Do NOT force-import optional Postgres/pgvector (they break analysis if wheels fail)
 hiddenimports = [
-    # 0.5.4 desktop window; collect pywebview's runtime-selected backend.
-    "webview",
-    "webview.platforms.edgechromium",
-    "webview.platforms.winforms",
-    "clr_loader",
-    "pythonnet",
-    "proxy_tools",
-    "bottle",
     "uvicorn",
     "uvicorn.logging",
     "uvicorn.loops",
@@ -81,12 +76,6 @@ hiddenimports = [
     "sqlite3",
     "bcrypt",
     "defusedxml",
-    # 0.5.3: APScheduler is imported inside functions (external_scheduler.py),
-    # which PyInstaller's static scan can miss after a refactor — declare it
-    # explicitly so the EXE never silently loses external-data auto-refresh.
-    "apscheduler",
-    "apscheduler.schedulers.background",
-    "apscheduler.triggers.interval",
     "defusedxml.ElementTree",
     "jose",
     "jose.jwt",
@@ -160,6 +149,11 @@ hiddenimports = [
     "statsmodels",
     "statsmodels.tsa.holtwinters",
     "joblib",
+    # external-data auto-refresh (app/services/external_scheduler.py): imported only
+    # inside functions, so declare explicitly or a refactor could drop it from the EXE.
+    "apscheduler",
+    "apscheduler.schedulers.background",
+    "apscheduler.triggers.interval",
     # pandas + its Excel engines: every /import endpoint (measurements, devices,
     # gateways, assets, work orders, lab samples, knowledge docs, analysis) and
     # every /import/template download go through app/services/table_import.py,
@@ -172,11 +166,10 @@ hiddenimports = [
     "xlrd",
 ]
 
-# pywebview selects its platform backend (edgechromium / winforms / ...) at
-# runtime, so static analysis cannot see those imports. The hook-webview.py
-# in pyinstaller-hooks-contrib only collects data files and dynamic libs,
-# not submodules — collect them all explicitly (the explicit entries above
-# stay as a belt-and-braces list for the Windows backends).
+# pywebview 在 Windows 上会按需动态 import 具体后端（edgechromium / winforms 等），
+# PyInstaller 的静态分析扫描不到这些 import，必须显式加进 hiddenimports，
+# 否则打包后双击 exe 会直接报 "No such backend" 或窗口打不开。
+# (pyinstaller-hooks-contrib 的 hook-webview.py 只收数据文件和动态库，不收子模块。)
 hiddenimports += collect_submodules('webview')
 hiddenimports += [
     'clr_loader',
@@ -233,6 +226,10 @@ a = Analysis(
 pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
 
 # onedir is more reliable than onefile on Windows (less antivirus false-positive)
+# App icon (assets/aims.ico, made from the AIMS logo). The desktop window and the installer
+# shortcuts pick it up from the EXE. SPECPATH is injected by PyInstaller (the spec's folder).
+_ICON = os.path.join(SPECPATH, "assets", "aims.ico")
+
 exe = EXE(
     pyz,
     a.scripts,
@@ -245,6 +242,7 @@ exe = EXE(
     upx=False,
     console=True,
     disable_windowed_traceback=False,
+    icon=_ICON if os.path.exists(_ICON) else None,
 )
 
 coll = COLLECT(

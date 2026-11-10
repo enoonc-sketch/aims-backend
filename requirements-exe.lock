@@ -21,27 +21,23 @@
 # dropped with plain uvicorn; PyYAML went with uvicorn[standard] (nothing in
 # the app imports yaml). APScheduler 3.10.4 added (with tzlocal + pytz) so the
 # EXE restores external-data auto-refresh.
-# Update 2026-11-09 (0.5.4, desktop window): pywebview==6.2.1 added with
-# bottle==0.13.4 and proxy_tools==0.1.0 (pure Python; verified by a Linux
-# install of this lock + pywebview). pythonnet==3.2.1, clr_loader==0.3.1,
-# pefile==2024.8.26 and pywin32-ctypes==0.2.3 are only usable on Windows
-# (pywebview's Edge WebView2 backend / PyInstaller's Windows handling), so
-# they carry a sys_platform == "win32" marker and are skipped on Linux
-# installs; their versions stay pinned for the Windows build. (They do ship
-# pure-Python wheels and would install on Linux — the marker only keeps
-# non-Windows installs lean, it is not an installability fix.)
-# cffi / pycparser (already pinned) are their dependencies.
+# 0.5.4: + pywebview==6.2.1 (desktop window) and its deps bottle / proxy_tools. pythonnet and
+# clr_loader are Windows-only deps of pywebview, so a Linux freeze does not show them; their
+# versions were resolved against win_amd64 / cp312 wheels (pip download --platform win_amd64).
 APScheduler==3.10.4
+bottle==0.13.4
+clr_loader==0.3.1 ; sys_platform == "win32"
+proxy_tools==0.1.0
+pythonnet==3.2.1 ; sys_platform == "win32"
+pywebview==6.2.1
 SQLAlchemy==2.1.8
 altgraph==0.17.5
 annotated-doc==0.0.5
 annotated-types==0.8.0
 anyio==4.16.0
 bcrypt==5.0.0
-bottle==0.13.4
 certifi==2026.10.23
 cffi==2.1.1
-clr_loader==0.3.1 ; sys_platform == "win32"
 click==8.5.1
 cryptography==50.0.2
 defusedxml==0.7.1
@@ -55,12 +51,11 @@ idna==3.20
 numpy==2.5.4
 openpyxl==3.1.5
 opentelemetry-api==1.45.2
-pefile==2024.8.26 ; sys_platform == "win32"
 packaging==26.3
+pefile==2024.8.26 ; sys_platform == "win32"
 pandas==3.1.1
 pyasn1==0.6.5
 pycparser==3.12
-proxy_tools==0.1.0
 pydantic-settings==2.16.2
 pydantic==2.14.3
 pydantic_core==2.50.4
@@ -70,10 +65,8 @@ python-dateutil==4.0.0
 python-dotenv==1.2.4
 python-jose==3.5.0
 python-multipart==0.0.33
-pythonnet==3.2.1 ; sys_platform == "win32"
-pywin32-ctypes==0.2.3 ; sys_platform == "win32"
 pytz==2026.6
-pywebview==6.2.1
+pywin32-ctypes==0.2.3 ; sys_platform == "win32"
 rsa==4.9.1
 setuptools==84.2.1
 six==1.17.0
