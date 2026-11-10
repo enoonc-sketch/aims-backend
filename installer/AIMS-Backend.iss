@@ -74,7 +74,9 @@ Filename: "{app}\{#MyAppExeName}"; Description: "安装完成后立即运行"; F
 [Code]
 { 检查 WebView2 Runtime：桌面窗口需要它。没有也能装、也能跑，
   程序会回退到浏览器并提示；所以只提示、不阻止安装。
-  GUID {F3017226-FE2A-4295-8BDF-00C3A9A7E4C5} 已对照微软文档确认。
+  GUID F3017226-FE2A-4295-8BDF-00C3A9A7E4C5 已对照微软文档确认。
+  （注意：这段注释里不能出现花括号——Pascal 注释不嵌套，
+  花括号里的右括号会提前结束注释，ISCC 就会报 Syntax error。）
   运行时可能是"每台机器"（HKLM）或"每用户"（HKCU）安装，三处都要查。 }
 function WebView2Available(): Boolean;
 begin
