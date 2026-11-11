@@ -32,7 +32,14 @@ def get_engine() -> Engine:
             from sqlalchemy.pool import StaticPool
             engine_kwargs["poolclass"] = StaticPool
     else:
+        # PostgreSQL: tune the pool (AIMS 1.0 phase 1, report item D-5).
+        # Defaults were QueuePool(5+10) with pool_recycle=-1 — a dashboard +
+        # import + AI workload could exhaust 15 connections, and idle-server
+        # disconnects were only rescued by pre_ping.
         engine_kwargs["pool_pre_ping"] = True
+        engine_kwargs["pool_size"] = settings.DB_POOL_SIZE
+        engine_kwargs["max_overflow"] = settings.DB_MAX_OVERFLOW
+        engine_kwargs["pool_recycle"] = settings.DB_POOL_RECYCLE
 
     engine_kwargs["connect_args"] = connect_args
     _engine = create_engine(settings.DATABASE_URL, **engine_kwargs)

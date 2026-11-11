@@ -20,7 +20,7 @@ from typing import Optional
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
-from sqlalchemy import delete, select
+from sqlalchemy import delete, select, update
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user, get_current_user_optional, get_db
@@ -205,6 +205,21 @@ def refresh(payload: RefreshRequest, request: Request, db: Session = Depends(get
         db.commit()
         raise invalid
 
+    # 审计项 D-6：单次使用改为条件 UPDATE——两个并发请求用同一个 refresh token
+    # 到达时，只有把 revoked_at 从 NULL 改成 now 的那一个能继续，另一个按
+    # "重放"处理（整族吊销）。原来的"读-判-写"存在竞态窗口。
+    consumed = db.execute(
+        update(RefreshToken)
+        .where(RefreshToken.id == row.id, RefreshToken.revoked_at.is_(None))
+        .values(revoked_at=now)
+    )
+    if consumed.rowcount == 0:
+        revoke_family(db, row.family_id, now)
+        record_audit(db, user_id=row.user_id, action="AUTH_REFRESH_REUSE_DETECTED", entity="auth",
+                     detail={"family": row.family_id, "reason": "concurrent"}, ip_address=ip)
+        db.commit()
+        raise invalid
+
     user = db.get(User, row.user_id)
     if user is None or not user.is_active:
         revoke_family(db, row.family_id, now)
@@ -212,7 +227,6 @@ def refresh(payload: RefreshRequest, request: Request, db: Session = Depends(get
         db.commit()
         raise invalid
 
-    row.revoked_at = now  # single use
     tokens = _issue_tokens(db, user, family_id=row.family_id, request=request, now=now)
     record_audit(db, user_id=user.id, action="AUTH_REFRESH", entity="auth", ip_address=ip)
     db.commit()

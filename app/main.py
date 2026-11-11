@@ -13,6 +13,7 @@ from app.api.v1.router import api_router
 from app.core.config import settings
 from app.deploy import APP_VERSION
 from app.core.middleware import (
+    RateLimitMiddleware,
     AuditMiddleware,
     HTTPSEnforcementMiddleware,
     RequestSizeLimitMiddleware,
@@ -117,10 +118,29 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             logger.exception("Database auto-init failed: %s", e)
     try:
-        from app.services.external_scheduler import init_all_jobs
+        from app.services.external_scheduler import (
+            init_all_jobs,
+            schedule_comm_stale_scan,
+            schedule_retention,
+        )
         init_all_jobs()
+        # 审计项 F-6：通讯中断巡检以前没有任何调度者调用它，独立部署时永远
+        # 不会自动执行。现在每 5 分钟自动巡检一次（阈值 15 分钟无数据=中断）。
+        schedule_comm_stale_scan(interval_minutes=5, stale_minutes=15)
+        # 审计项 D-1：数据保留清理（每日 03:30 UTC）+ 启动时立即补跑一次，
+        # 让长时间不关机的机器也能追上清理进度。
+        schedule_retention(hour=3)
     except Exception as e:
         logger.exception("External data scheduler init failed: %s", e)
+    # 审计项 D-2：启动时回收崩溃后停留在 processing 的导入批次。
+    try:
+        from app.db.session import SessionLocal as _SL
+        from app.services.retention import recover_orphan_imports
+
+        with _SL() as _s:
+            recover_orphan_imports(_s)
+    except Exception as e:
+        logger.exception("Orphan import recovery failed: %s", e)
     if FRONTEND_PATH:
         logger.info("Frontend prototype found: %s", FRONTEND_PATH)
     yield
@@ -168,6 +188,18 @@ if settings.cors_origin_list:
         allow_headers=["Authorization", "Content-Type", "Accept"],
         expose_headers=["Retry-After", "Content-Disposition"],
         max_age=600,
+    )
+
+# 请求限流（M-7）：放在安全头内侧、CORS 外侧；只作用于 API 前缀，
+# 登录/刷新用严格档，其余用宽松档。测试里通过 RATE_LIMIT_ENABLED=false 关闭。
+if settings.RATE_LIMIT_ENABLED:
+    app.add_middleware(
+        RateLimitMiddleware,
+        api_prefix=_API,
+        auth_paths=("/auth/login", "/auth/refresh", "/auth/change-password"),
+        global_limit=settings.RATE_LIMIT_API_PER_WINDOW,
+        auth_limit=settings.RATE_LIMIT_AUTH_PER_WINDOW,
+        window_seconds=settings.RATE_LIMIT_WINDOW_SECONDS,
     )
 
 app.add_middleware(SecurityHeadersMiddleware, hsts=settings.https_required, api_prefix=_API)

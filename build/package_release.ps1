@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     把构建产物打成可交付的发行包（安装包 + 文档 + 运维脚本 + 校验和 + 清单）。
 
@@ -26,7 +26,7 @@
     默认从 app/deploy/__init__.py 读取，一般不用手动指定。
 
 .EXAMPLE
-    .\package_release.ps1 -Installer ..\installer_output\AIMS-0.6.0-x64-Setup.exe
+    .\package_release.ps1 -Installer ..\installer_output\AIMS-<版本>-x64-Setup.exe
 #>
 [CmdletBinding()]
 param(
@@ -65,18 +65,26 @@ if ($Arm64Installer) {
 # ---- 文档与脚本 ----
 $docs = Join-Path $OutDir 'docs'
 New-Item -ItemType Directory -Path $docs -Force | Out-Null
-foreach ($f in @('部署说明.md', '用户手册.md', '故障排查.md', '功能对照表.md',
+foreach ($f in @('安装说明.md', '用户手册.md', '管理员手册.md', '安全审计报告.md',
+                 '部署说明.md', '故障排查.md', '功能对照表.md',
                  '依赖与许可证清单.md', '测试报告.md')) {
     $src = Join-Path $script:RepoRoot "docs\$f"
     if (Test-Path -LiteralPath $src) { Copy-Item -LiteralPath $src -Destination $docs -Force }
     else { Write-Host "  ! 缺少文档 $f" -ForegroundColor Yellow }
+}
+# 发布说明、SBOM、性能基线带版本号，用通配收集，避免每次发版改脚本
+foreach ($pattern in @('RELEASE_NOTES_*.md', 'sbom-*.cdx.json', 'perf-baseline-*.json', '计划书对照与差距分析.md')) {
+    Get-ChildItem -LiteralPath (Join-Path $script:RepoRoot 'docs') -Filter $pattern -File -ErrorAction SilentlyContinue |
+        Copy-Item -Destination $docs -Force
 }
 $lic = Join-Path $script:RepoRoot 'LICENSES.txt'
 if (Test-Path -LiteralPath $lic) { Copy-Item -LiteralPath $lic -Destination $OutDir -Force }
 
 $toolsOut = Join-Path $OutDir 'tools'
 New-Item -ItemType Directory -Path $toolsOut -Force | Out-Null
-Get-ChildItem -LiteralPath (Join-Path $script:RepoRoot 'tools') -Filter '*.ps1' -File |
+# 注意：Get-ChildItem -Include 在 LiteralPath + 无 -Recurse 时不生效，这里用扩展名过滤
+Get-ChildItem -LiteralPath (Join-Path $script:RepoRoot 'tools') -File |
+    Where-Object { $_.Extension -in @('.ps1', '.vbs') } |
     Copy-Item -Destination $toolsOut -Force
 
 # ---- 校验和与清单 ----

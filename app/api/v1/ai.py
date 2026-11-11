@@ -6,6 +6,7 @@ configured, `_call_llm()` can be wired up to call an OpenAI-compatible chat
 completion endpoint for richer diagnosis/chat responses.
 """
 import statistics
+import sys
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
@@ -14,7 +15,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_current_user, get_db
+from app.api.deps import get_current_superuser, get_current_user, get_db
 from app.core.config import settings
 from app.models.ai import AIChatMessage, AIChatSession, AIDiagnosis, AIHealthScore, AIPrediction
 from app.models.device import Device
@@ -35,6 +36,7 @@ from app.schemas.ai import (
     PredictionPoint,
     PredictionRequest,
     PredictionResult,
+    CoreDeleteResult,
     PyPackageInstallResult,
     PyPackageOut,
 )
@@ -430,6 +432,65 @@ def download_all_cores(db: Session = Depends(get_db), user: User = Depends(get_c
     return results
 
 
+@router.get("/engine")
+def engine_info():
+    """AI 推理引擎信息卡（总方案 7.1）：名称/版本/安装路径/架构/运行参数/GPU 探测。
+
+    所有字段真实采集；不支持的指标（如无 GPU 时）明确返回 null，不伪造数值。
+    """
+    import platform as _platform
+    from pathlib import Path
+
+    from app.core.config import settings
+    from app.services.system_info import get_system_info
+
+    engine_version = None
+    engine_path = None
+    try:
+        import llama_cpp
+        engine_version = getattr(llama_cpp, "__version__", None)
+        engine_path = str(Path(llama_cpp.__file__).parent)
+        installed = True
+    except Exception:
+        installed = False
+
+    hw = get_system_info()
+    return {
+        "engine": "llama.cpp (llama-cpp-python)",
+        "version": engine_version,
+        "path": engine_path,
+        "arch": _platform.machine(),
+        "installed": installed,
+        "status": llm_local_status_snapshot(),
+        "params": {
+            "ctx": settings.AI_LOCAL_LLM_CTX,
+            "threads": settings.AI_LOCAL_LLM_THREADS,
+            "gpu_layers": settings.AI_LOCAL_LLM_GPU_LAYERS,
+            "max_tokens": settings.AI_LOCAL_LLM_MAX_TOKENS,
+        },
+        "hardware": {
+            "cpu_cores": hw.get("cpu_cores"),
+            "total_ram_gb": hw.get("total_ram_gb"),
+            "available_ram_gb": hw.get("available_ram_gb"),
+            "gpu_detected": hw.get("gpu_detected"),
+            "gpu_source": hw.get("gpu_source"),
+        },
+    }
+
+
+def llm_local_status_snapshot():
+    from app.services import llm_local
+    from app.api.deps import get_db as _get_db
+
+    # 端点已有 db 依赖时用参数更严谨；这里快照用独立会话，避免签名扩散
+    from app.db.session import SessionLocal
+    db = SessionLocal()
+    try:
+        return llm_local.status(db)
+    finally:
+        db.close()
+
+
 @router.get("/models", response_model=ActiveModelStatus)
 def models_status(db: Session = Depends(get_db)):
     """Which local (real, downloaded) LLM / embedding model is active and loaded.
@@ -484,6 +545,68 @@ def set_active_model(payload: ActiveModelRequest, db: Session = Depends(get_db),
     return llm_local.status(db)
 
 
+@router.post("/cores/{core_id}/unload", response_model=ActiveModelStatus)
+def unload_model(core_id: str, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    """卸载模型：释放 llama.cpp 在 RAM/VRAM 中的句柄，但保留模型文件（总方案 7.3）。
+
+    与删除严格区分：卸载是运行时资源操作，随时可重新加载；删除才会动文件。
+    """
+    from app.services import ai_cores
+
+    try:
+        out = ai_cores.unload_model(db, core_id)
+    except ValueError:
+        raise HTTPException(status_code=404, detail=f"Unknown core id: {core_id}")
+    except ai_cores.ModelDeleteError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return out["status"]
+
+
+@router.delete("/cores/{core_id}", response_model=CoreDeleteResult)
+def delete_model(
+    core_id: str,
+    confirm: bool = Query(False, description="必须显式传 confirm=true 才执行删除"),
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_superuser),
+):
+    """删除模型文件（超管专用）。与卸载严格区分（总方案 7.3 / 7.4）：
+
+    - 仅 llm/embedding 二进制模型可删（内置规则包与业务绑定，不可删）；
+    - 激活中的模型拒绝删除（409，须先切换）；
+    - 文件路径受控：只允许删除模型目录内的 .gguf/.bin/.onnx；
+    - 删除前自动卸载推理句柄；数据库行复位为"未下载"，manifest 中仍可见可重新下载。
+    """
+    from app.services import ai_cores
+
+    if not confirm:
+        raise HTTPException(
+            status_code=400,
+            detail="删除模型是破坏性操作：请带 ?confirm=true 重新请求（模型文件将被移除，可重新下载）",
+        )
+    try:
+        out = ai_cores.delete_model(db, core_id)
+    except ValueError:
+        raise HTTPException(status_code=404, detail=f"Unknown core id: {core_id}")
+    except ai_cores.ModelDeleteError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    return CoreDeleteResult(**{k: v for k, v in out.items() if k != "status"})
+
+
+@router.post("/cores/scan-local")
+def scan_local_models(db: Session = Depends(get_db), user: User = Depends(get_current_superuser)):
+    """扫描模型目录中未登记的 GGUF 文件并登记（总方案 7.2 模型导入）。
+
+    桌面部署的常规导入方式：把 .gguf 文件放进模型目录后点一次扫描。
+    登记 SHA-256 与来源 local-import；路径受控，只扫描模型目录本身。
+
+    权限：与模型加载 / 卸载 / 删除一致，属于管理员操作——它会写入模型注册表，
+    普通用户不应能改变本机可用的模型集合。
+    """
+    from app.services import ai_cores
+
+    return ai_cores.scan_local_models(db)
+
+
 @router.get("/cores/{core_id}/content", response_model=CorePackContent)
 def core_content(core_id: str, db: Session = Depends(get_db)):
     """Return a downloaded core's content straight from the database."""
@@ -506,12 +629,21 @@ def core_content(core_id: str, db: Session = Depends(get_db)):
 # re-running build_exe.bat / build_onefile.bat.
 # ============================================================
 @router.get("/packages", response_model=list[PyPackageOut])
-def list_py_packages():
+def list_py_packages(user: User = Depends(get_current_user)):
+    # 审计项 L-5：以前完全无认证，泄露后端已装包清单（M-2 的前置侦察面）。
     return py_packages.list_packages()
 
 
 @router.post("/packages/{package_id}/install", response_model=PyPackageInstallResult)
-def install_py_package(package_id: str, user: User = Depends(get_current_user)):
+def install_py_package(package_id: str, user: User = Depends(get_current_superuser)):
+    # 审计项 M-2：服务器端 pip 安装属于高危管理操作，收敛到超管。
+    # 包名仍为代码内固定白名单（无任意包名注入面）；EXE 交付版直接禁用
+    # （离线环境装不上，也避免供应链面）。
+    if getattr(sys, "frozen", False):
+        raise HTTPException(
+            status_code=400,
+            detail="离线安装版不支持在线安装 AI 依赖包。请使用对应版本的完整安装包。",
+        )
     try:
         return py_packages.install_package(package_id)
     except py_packages.PackageInstallError as e:

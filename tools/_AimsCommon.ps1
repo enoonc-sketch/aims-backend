@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     AIMS 运维脚本公共函数（被 tools 下其它脚本 dot-source 引用）。
 

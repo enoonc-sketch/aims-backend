@@ -191,8 +191,24 @@ def inspect_table_bytes(raw: bytes, ext: str, limits: UploadLimits | None = None
         _inspect_xls(raw)
     elif ext == "csv":
         _inspect_csv(raw)
+    elif ext == "pdf":
+        _inspect_pdf(raw)
     else:
         _reject(f"Unsupported file type .{ext}")
+
+
+def _inspect_pdf(raw: bytes) -> None:
+    """PDF 魔数校验：合法 PDF 以 %PDF- 开头（允许少量前导空白/垃圾字节）。
+
+    同时拒绝包含可执行脚本入口（/JS、/Launch、/OpenAction）的 PDF——这类文件
+    在阅读器里可自动执行动作，不应进入解析流程（总方案 3.5 文件安全）。
+    """
+    head = raw[:1024]
+    if b"%PDF-" not in head:
+        _reject("File content is not a valid PDF")
+    for marker in (b"/JavaScript", b"/Launch", b"/OpenAction"):
+        if marker in raw:
+            _reject("PDF 包含可执行动作（/JavaScript、/Launch 等），出于安全考虑拒绝解析")
 
 
 def enforce_table_limits(rows: int, columns: int, limits: UploadLimits | None = None) -> None:

@@ -99,3 +99,67 @@ def create_ai_feedback(payload:dict, db:Session=Depends(get_db), user=Depends(ge
     record_audit(db,user_id=user.id,action="AI_FEEDBACK_CREATE",entity="ai_feedback",entity_id=x.id,
                  detail={"diagnosis_id":x.diagnosis_id,"work_order_id":x.work_order_id,"loop_feedback_id":loop_id})
     db.commit(); db.refresh(x); return {**_dump(x), "loop_feedback_id": loop_id}
+
+
+# ---------------------------------------------------------------------------
+# 读取端点（AIMS 1.0 阶段 7，审计项：industrial 影子域 6 张表只写不读）
+#
+# 这些表此前只能写入、没有任何读取入口，数据成了"影子"。补齐只读查询，
+# 让接入配置、TAG 映射、采集事件、质量事件、模型版本、AI 反馈都可核对。
+# 全部带分页与上限，避免一次拉爆内存。
+# ---------------------------------------------------------------------------
+
+@router.get("/connections")
+def list_connections(limit: int = 200, offset: int = 0, db: Session = Depends(get_db), user=Depends(get_current_user)):
+    rows = db.scalars(select(CommunicationConnection).order_by(CommunicationConnection.id.desc())
+                      .limit(min(limit, 1000)).offset(max(offset, 0))).all()
+    return {"total": db.query(CommunicationConnection).count(), "items": [_dump(x) for x in rows]}
+
+
+@router.get("/tag-mappings")
+def list_tag_mappings(device_id: int | None = None, limit: int = 200, offset: int = 0,
+                      db: Session = Depends(get_db), user=Depends(get_current_user)):
+    stmt = select(TagMapping)
+    if device_id is not None:
+        stmt = stmt.where(TagMapping.device_id == device_id)
+    rows = db.scalars(stmt.order_by(TagMapping.id.desc()).limit(min(limit, 1000)).offset(max(offset, 0))).all()
+    return {"total": len(rows), "items": [_dump(x) for x in rows]}
+
+
+@router.get("/acquisition-events")
+def list_acquisition_events(device_id: int | None = None, tag_id: int | None = None,
+                            limit: int = 200, offset: int = 0,
+                            db: Session = Depends(get_db), user=Depends(get_current_user)):
+    stmt = select(AcquisitionEvent)
+    if device_id is not None:
+        # acquisition_events 通过 device_tags 关联设备（表本身没有 device_id）
+        stmt = stmt.where(AcquisitionEvent.tag_id.in_(
+            select(DeviceTag.id).where(DeviceTag.device_id == device_id)
+        ))
+    if tag_id is not None:
+        stmt = stmt.where(AcquisitionEvent.tag_id == tag_id)
+    rows = db.scalars(stmt.order_by(AcquisitionEvent.event_time.desc())
+                      .limit(min(limit, 1000)).offset(max(offset, 0))).all()
+    return {"total": len(rows), "items": [_dump(x) for x in rows]}
+
+
+@router.get("/quality-events")
+def list_quality_events(device_id: int | None = None, limit: int = 200, offset: int = 0,
+                        db: Session = Depends(get_db), user=Depends(get_current_user)):
+    stmt = select(DataQualityEvent)
+    if device_id is not None:
+        stmt = stmt.where(DataQualityEvent.device_id == device_id)
+    rows = db.scalars(stmt.order_by(DataQualityEvent.id.desc()).limit(min(limit, 1000)).offset(max(offset, 0))).all()
+    return {"total": len(rows), "items": [_dump(x) for x in rows]}
+
+
+@router.get("/models")
+def list_model_versions(limit: int = 100, db: Session = Depends(get_db), user=Depends(get_current_user)):
+    rows = db.scalars(select(AIModelVersion).order_by(AIModelVersion.id.desc()).limit(min(limit, 500))).all()
+    return {"total": len(rows), "items": [_dump(x) for x in rows]}
+
+
+@router.get("/ai-feedback")
+def list_ai_feedback(limit: int = 100, db: Session = Depends(get_db), user=Depends(get_current_user)):
+    rows = db.scalars(select(AIFeedback).order_by(AIFeedback.id.desc()).limit(min(limit, 500))).all()
+    return {"total": len(rows), "items": [_dump(x) for x in rows]}

@@ -77,8 +77,8 @@ hiddenimports = [
     "bcrypt",
     "defusedxml",
     "defusedxml.ElementTree",
-    "jose",
-    "jose.jwt",
+    # PyJWT 1.0.0 起替代 python-jose（jose 已从依赖中移除，这里不能再收集）
+    "jwt",
     "app",
     "app.main",
     "app.core.config",
@@ -224,10 +224,10 @@ a = Analysis(
         # collected into the EXE either.
         "uvloop",
         "httptools",
-        "asyncpg",
-        "psycopg2",
-        "psycopg2_binary",
-        "pgvector",
+        "asyncpg",   # 应用只用 psycopg2 驱动（DATABASE_URL=postgresql+psycopg2://…），
+                     # asyncpg 仅在用户手写 asyncpg 连接串时才需要，排除省 ~5MB。
+                     # 注意：psycopg2 / pgvector 绝不能出现在本清单——曾误排导致
+                     # EXE 无法连接 PostgreSQL（阶段 2 审计发现并修复）。
         "torch",
         "tensorflow",
         "IPython",
@@ -255,7 +255,13 @@ exe = EXE(
     bootloader_ignore_signals=False,
     strip=False,
     upx=False,
-    console=True,
+    # Windows GUI 子系统（无 CMD 窗口）：桌面快捷方式 / 启动器拉起后端时
+    # 全程不出现黑色控制台。排障需求由两种方式满足，不牺牲可观测性：
+    #   1) 后端始终把日志写入 <数据目录>/logs/aims.log（_setup_file_logging）；
+    #   2) 开发调试模式：设置 AIMS_DEBUG_CONSOLE=1（或用「AIMS 调试模式」
+    #      快捷方式 / AIMS.exe --debug-console），run_standalone.py 会在
+    #      启动时 AllocConsole 重新挂上 stdout/stderr，仅此模式有控制台。
+    console=False,
     disable_windowed_traceback=False,
     icon=_ICON if os.path.exists(_ICON) else None,
 )

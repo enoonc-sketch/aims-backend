@@ -122,3 +122,32 @@ def test_device_without_ip_returns_400(client):
 
     resp = client.post(f"/api/v1/devices/{device_id}/test-connection")
     assert resp.status_code == 400
+
+
+def test_ssrf_guard_blocks_unregistered_private_target(client, db_session, monkeypatch):
+    """阶段 1.3（审计项 M-4）：未登记在任何网关/TAG 上的内网地址，
+    /communication/test 必须拒绝（防止被当内网端口扫描 oracle）。"""
+    from app.services import ssrf_guard
+    monkeypatch.setattr(
+        ssrf_guard, "resolve_host", lambda host: [__import__("ipaddress").ip_address("10.20.30.40")]
+    )
+    resp = client.post(
+        "/api/v1/communication/test",
+        json={"host": "internal.lab.example", "port": 502, "protocol": "Modbus TCP", "timeout": 2},
+    )
+    assert resp.status_code == 400
+    assert "未登记" in resp.json()["detail"]
+
+
+def test_ssrf_guard_allows_registered_gateway_target(client, db_session, monkeypatch):
+    """已登记网关地址（即使是局域网 IP）→ 正当运维场景，放行。"""
+    from app.models.device import Gateway
+    from app.services import ssrf_guard
+    db_session.add(Gateway(gateway_code="SSRF-GW-1", name="g", ip_address="192.168.10.5", port=502))
+    db_session.commit()
+    # resolve_host 无需真实 DNS：192.168.10.5 本身是 IP 字面量
+    resp = client.post(
+        "/api/v1/communication/test",
+        json={"host": "192.168.10.5", "port": 502, "protocol": "Modbus TCP", "timeout": 1},
+    )
+    assert resp.status_code == 200  # 连不通也没关系——不是 400 拦截即可

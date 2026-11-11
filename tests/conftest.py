@@ -15,6 +15,9 @@ os.environ.setdefault("APP_ENV", "development")
 os.environ["CORS_ORIGINS"] = "https://ui.example.test"
 os.environ.setdefault("DATABASE_URL", "sqlite:///:memory:")
 os.environ.setdefault("AUTO_INIT_DB", "false")
+# 限流在测试里默认关闭：pytest 所有请求来自同一个 TestClient IP，
+# 开启会命中 429 而不是被测功能本身。专门的限流测试自行打开。
+os.environ.setdefault("RATE_LIMIT_ENABLED", "false")
 os.environ.setdefault(
     "TEST_DATABASE_URL",
     os.environ.get("TEST_DATABASE_URL", "sqlite:///:memory:"),

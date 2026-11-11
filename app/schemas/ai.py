@@ -180,6 +180,16 @@ class PyPackageInstallResult(BaseModel):
     log_tail: str
 
 
+class CoreDeleteResult(BaseModel):
+    """模型删除结果（阶段 3-5 补齐：模型生命周期管理，总方案 7.3/7.4）。"""
+
+    id: str
+    kind: str  # "llm" | "embedding"
+    deleted: bool
+    freed_bytes: int = 0
+    file_removed: bool = False
+
+
 class DiagnosisOut(BaseModel):
     """一条已落库的诊断(含依据快照: 知识库摘录 / 建议 SOP / 证据统计 / 校准说明)。"""
 

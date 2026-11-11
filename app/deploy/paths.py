@@ -151,7 +151,9 @@ class Layout:
         return f"{stem}.exe" if IS_WINDOWS else stem
 
     def ensure_dirs(self) -> None:
-        for d in (self.config_dir, self.data_dir, self.backups_dir, self.logs_dir,
+        # 程序目录也要建：安装包里由安装程序创建，但源码/便携部署时它可能还不存在，
+        # 而 PostgreSQL 子进程是以它作为工作目录启动的（cwd 缺失会被误报成"找不到程序"）。
+        for d in (self.root, self.config_dir, self.data_dir, self.backups_dir, self.logs_dir,
                   self.uploads_dir, self.models_dir, self.pg_data.parent):
             try:
                 d.mkdir(parents=True, exist_ok=True)

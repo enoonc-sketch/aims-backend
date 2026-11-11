@@ -28,8 +28,10 @@ from app.deploy import APP_VERSION
 
 logger = logging.getLogger("aims.templates")
 
-#: 单个模板包上传体积上限（与部署配置 MAX_UPLOAD_BYTES 独立，模板不应超大）
-MAX_PACKAGE_BYTES = 64 * 1024 * 1024
+#: 单个模板包上传体积上限。审计项 L-3：以前是 64MB，但全局
+#: RequestSizeLimitMiddleware（MAX_UPLOAD_BYTES+1MB≈21MB）先到 413，64MB
+#: 永远不可达——配置自相矛盾。现在与全局上限对齐（导入模板包实际最大 20MB）。
+MAX_PACKAGE_BYTES = 20 * 1024 * 1024
 #: 解压后总量的硬上限（防 zip 炸弹：64MB 压缩包声称解压出 2GB 的情形）
 MAX_UNCOMPRESSED_BYTES = 256 * 1024 * 1024
 #: 单个成员上限

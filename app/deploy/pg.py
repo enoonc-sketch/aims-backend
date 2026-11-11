@@ -241,6 +241,14 @@ class Postgres:
     def run(self, args: Iterable[str | Path], *, timeout: float = 120, password: str | None = None,
             check: bool = False, cwd: Path | None = None) -> PgResult:
         argv = [str(a) for a in args]
+        # subprocess 在 cwd 不存在时抛的也是 FileNotFoundError，会被下面误判成
+        # "找不到 PostgreSQL 程序"，把现场运维引向错误方向（实际是安装目录没建）。
+        workdir = Path(cwd or self.layout.root)
+        if not workdir.is_dir():
+            try:
+                workdir.mkdir(parents=True, exist_ok=True)
+            except OSError as exc:
+                raise PgError(f"无法创建工作目录 {workdir}：{exc}") from exc
         try:
             proc = subprocess.run(
                 argv,
@@ -250,11 +258,13 @@ class Postgres:
                 errors="replace",
                 timeout=timeout,
                 env=self._env(password),
-                cwd=str(cwd or self.layout.root),
+                cwd=str(workdir),
                 creationflags=CREATE_NO_WINDOW,
             )
         except FileNotFoundError as exc:
-            raise PgError(f"找不到 PostgreSQL 程序：{argv[0]}（安装不完整？）") from exc
+            if not Path(argv[0]).exists():
+                raise PgError(f"找不到 PostgreSQL 程序：{argv[0]}（安装不完整？）") from exc
+            raise PgError(f"无法在工作目录 {workdir} 下运行 {argv[0]}：{exc}") from exc
         except subprocess.TimeoutExpired as exc:
             raise PgError(f"命令超时（{timeout:.0f}s）：{' '.join(argv[:2])}") from exc
         result = PgResult(args=argv, code=proc.returncode, stdout=proc.stdout or "", stderr=proc.stderr or "")

@@ -6,6 +6,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user, get_db
@@ -99,6 +100,17 @@ def _pick_column(columns, candidates: tuple[str, ...]) -> Optional[str]:
     return None
 
 
+def _utc_naive_array(times):
+    """把（可能带时区的）pandas 时间列转成 datetime64[ns] 的 UTC 朴素数组。
+
+    tz-aware 的 DatetimeIndex.to_numpy() 会返回 object 数组（元素是 Timestamp，
+    带 tz），再传 tz= 给 Timestamp 就会报错；先统一到 UTC 再去掉时区最稳。
+    """
+    if getattr(times.dt, "tz", None) is not None:
+        times = times.dt.tz_convert("UTC").dt.tz_localize(None)
+    return times.to_numpy(dtype="datetime64[ns]")
+
+
 def _dataframe_to_measurements(df, device_id: int, import_id: int, time_column: Optional[str] = None):
     """Turn an uploaded CSV/Excel DataFrame into Measurement rows.
 
@@ -145,18 +157,23 @@ def _dataframe_to_measurements(df, device_id: int, import_id: int, time_column: 
         n_bad_value = int(values.isna().sum())
         if n_bad_value:
             warnings.append(f"{n_bad_value} row(s) had a non-numeric value and were skipped")
-        for t, comp, val in zip(times, df[comp_col], values):
-            if pd.isna(t) or pd.isna(val):
+        # 同 wide 分支：用 numpy 数组按下标遍历，避免 pandas 标量访问开销
+        time_values = _utc_naive_array(times)
+        comp_values = df[comp_col].to_numpy(dtype=object)
+        val_values = values.to_numpy(dtype="float64", na_value=float("nan"))
+        for i in range(len(time_values)):
+            if pd.isna(time_values[i]) or val_values[i] != val_values[i]:
                 continue
-            comp_name = str(comp).strip()
+            comp = comp_values[i]
+            comp_name = "" if comp is None else str(comp).strip()
             if not comp_name or comp_name.lower() == "nan":
                 continue
             rows.append(
                 Measurement(
-                    time=t.to_pydatetime(),
+                    time=pd.Timestamp(time_values[i]).replace(tzinfo=timezone.utc),
                     device_id=device_id,
                     component_name=comp_name,
-                    value=float(val),
+                    value=float(val_values[i]),
                     quality="good",
                     import_id=import_id,
                 )
@@ -179,17 +196,22 @@ def _dataframe_to_measurements(df, device_id: int, import_id: int, time_column: 
                 "column per component, or Component/Value columns."
             )
         columns_detected = [str(c) for c in value_cols]
-        for i in range(len(df)):
-            t = times.iloc[i]
-            if pd.isna(t):
+        # 性能：原来每格用 df[c].iloc[i] + times.iloc[i] 取标量，pandas 的标量访问
+        # 每次都有路由开销，2 万行 × N 列就是十万次，实测把导入压到 3.7k 行/秒。
+        # 转成 numpy 数组按下标取值（同一语义），时间戳每行只转换一次而不是每列一次。
+        time_values = _utc_naive_array(times)   # datetime64[ns]，UTC 已归一
+        col_values = {c: df[c].to_numpy(dtype="float64", na_value=float("nan")) for c in value_cols}
+        for i in range(len(time_values)):
+            if pd.isna(time_values[i]):
                 continue
+            ts = pd.Timestamp(time_values[i]).replace(tzinfo=timezone.utc)
             for c in value_cols:
-                v = df[c].iloc[i]
-                if pd.isna(v):
+                v = col_values[c][i]
+                if v != v:  # NaN
                     continue
                 rows.append(
                     Measurement(
-                        time=t.to_pydatetime(),
+                        time=ts,
                         device_id=device_id,
                         component_name=str(c).strip(),
                         value=float(v),
@@ -264,7 +286,25 @@ async def import_measurements_file(
         raise HTTPException(status_code=400, detail="No valid measurement rows found after parsing")
 
     device = db.get(Device, device_id)
-    out = data_chain.process_readings(db, device, rows, realtime=False)
+    try:
+        out = data_chain.process_readings(db, device, rows, realtime=False)
+    except IntegrityError as exc:
+        # 写入层已做幂等 upsert；这里兜的是其它约束（如 import_id 外键、历史库
+        # 缺少首列主键等），绝不能再让用户看到 500 + 堆栈。
+        db.rollback()
+        logger.warning("measurement import failed (constraint): %s", exc)
+        try:
+            failed = db.get(MeasurementImport, import_row.id)
+            if failed is not None:
+                failed.status = "failed"
+                db.commit()
+        except Exception:  # noqa: BLE001
+            db.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail="导入的数据与已有记录冲突，本次导入已回滚，数据库未被修改。"
+                   "请检查文件中的时间戳与测点名称后重试。",
+        ) from exc
     if out.quality.get("bad") or out.quality.get("uncertain"):
         warnings.append(
             f"数据质量: good {out.quality['good']} / uncertain {out.quality['uncertain']} / bad {out.quality['bad']}"

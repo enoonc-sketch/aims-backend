@@ -45,5 +45,26 @@ async def preview(file: UploadFile=File(...), db:Session=Depends(get_db)):
     if bad_values: issues.append({"rule_code":"VALUE_NOT_NUMERIC","severity":"error","count":bad_values})
     if bad_times: issues.append({"rule_code":"INVALID_TIMESTAMP","severity":"error","count":bad_times})
     status="rejected" if any(i["severity"]=="error" for i in issues) else ("warning" if issues else "passed")
+    # 审计项 F-9：校验结果落库（以前 ImportValidation 表只导入未写入，校验记录
+    # 无法追溯）。预览本身没有正式导入批次，因此建一条 status="validating"
+    # 的批次记录（device_id 留空），校验结果挂在它下面，可长期审计追溯。
+    import_row = MeasurementImport(
+        file_name=upload.filename,
+        row_count=len(df),
+        column_count=len(df.columns),
+        status="validating",
+        source="local",
+    )
+    db.add(import_row)
+    db.flush()
+    db.add(ImportValidation(
+        import_id=import_row.id,
+        status=status,
+        summary={"rows": len(df), "columns": len(df.columns)},
+        mapping=detected,
+        issues=issues,
+    ))
+    db.commit()
     return {"status":status,"rows":len(df),"columns":len(df.columns),"detected_columns":detected,"issues":issues,
+            "import_id":import_row.id,
             "sample":df.head(10).fillna("").to_dict(orient="records")}

@@ -128,6 +128,8 @@ class App:
             self._fail("AIMS 启动失败", f"{exc}\n\n{traceback.format_exc(limit=6)}\n\n日志：{self.log_path}")
             return False
         self.splash.close()
+        # 后端由本次启动拉起时，交给看门狗盯着：崩溃能在日志里看见，并有限次自愈。
+        self._start_backend_watchdog()
         # 桌面窗口模式（计划书 3.1-A）：由 run() 里的 pywebview 原生窗口负责打开界面，
         # 这里就不再先用 Edge --app 弹一个窗口（避免双窗口）。
         if self.open_ui and not self._use_desktop_window():
@@ -240,6 +242,81 @@ class App:
             logger.exception("shutdown error")
         logger.info("launcher exited")
 
+    # ------------------------------------------------------ 后端异常退出监控
+    #: 自动重启上限；超过即认为不是偶发崩溃，停止重试并告知用户（防止"崩溃-重启"死循环）
+    MAX_BACKEND_RESTARTS = 3
+    #: 刚启动就崩（< 该秒数）视为不稳定，退避更长、更快耗尽重试次数
+    QUICK_CRASH_SECONDS = 60.0
+
+    @staticmethod
+    def _restart_policy(restarts: int, since_last_start: float) -> tuple[str, float]:
+        """崩溃后的处置策略（纯函数，便于测试）。
+
+        返回 ("restart", 延迟秒数) 或 ("give_up", 0)。
+        """
+        if restarts >= App.MAX_BACKEND_RESTARTS:
+            return ("give_up", 0.0)
+        if since_last_start < App.QUICK_CRASH_SECONDS:
+            # 1.5s / 3s / 6s 退避：给瞬时故障（端口抢占、OOM 回收）留出恢复时间
+            return ("restart", 1.5 * (2 ** restarts))
+        return ("restart", 2.0)
+
+    def _start_backend_watchdog(self) -> None:
+        """所有界面模式通用的后端看门狗。
+
+        以前只有 `--headless` 排障模式会轮询后端退出码；正式用户走的是
+        WebView2 窗口 / 托盘，后端一崩，窗口只会白屏，日志也没人看，启动器
+        更不会把它拉起来——"后台服务异常"在需求里必须可发现、可恢复。
+        """
+        if not self.supervisor.started_backend_here:
+            return  # 后端起自别的进程/服务：不归本启动器管，避免误杀误启
+        if getattr(self, "_watchdog_started", False):
+            return  # 托盘「重启服务」会重新调用 start()：复用同一个看门狗线程
+        self._watchdog_started = True
+        threading.Thread(target=self._watch_backend, name="aims-backend-watchdog",
+                         daemon=True).start()
+
+    def _watch_backend(self) -> None:
+        restarts = 0
+        started_at = time.time()
+        while not self._exit.is_set():
+            time.sleep(2.0)
+            if self._exit.is_set():
+                return
+            proc = self.supervisor.backend
+            if proc is None or proc.poll() is None:
+                continue
+            code = proc.returncode
+            action, delay = self._restart_policy(restarts, time.time() - started_at)
+            logger.error("backend exited unexpectedly (code=%s); policy=%s delay=%.1fs restarts=%s",
+                         code, action, delay, restarts)
+            if action == "give_up":
+                self._fail(
+                    "AIMS 后端已停止",
+                    f"后端服务连续 {restarts} 次异常退出（最后一次退出代码 {code}），已停止自动恢复。\n\n"
+                    f"日志：{self.supervisor.layout.logs_dir / 'backend.log'}\n\n"
+                    "可在托盘菜单「重启服务」手动重试，或运行「AIMS 诊断报告」查看原因。",
+                )
+                return
+            time.sleep(delay)
+            if self._exit.is_set():
+                return
+            try:
+                self.supervisor.start_backend()
+            except Exception as exc:  # noqa: BLE001  (SupervisorError 已含日志尾巴)
+                logger.error("backend auto-restart failed: %s", exc)
+                restarts += 1
+                started_at = time.time()
+                continue
+            restarts += 1
+            started_at = time.time()
+            logger.info("backend auto-restarted (attempt %s)", restarts)
+            if self.icon is not None:
+                try:
+                    win.notify(self.icon, PRODUCT_NAME, "后端服务已自动重启")
+                except Exception:  # noqa: BLE001
+                    pass
+
     # ------------------------------------------------------------------ 运行
     def run(self) -> int:
         if not self.start():
@@ -341,7 +418,15 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--diagnose", action="store_true", help="打印诊断信息后退出")
     parser.add_argument("--status", action="store_true", help="以 JSON 打印运行状态后退出")
     parser.add_argument("--version", action="store_true", help="显示版本")
+    parser.add_argument("--debug-console", action="store_true",
+                        help="开发调试模式：给后端子进程分配可见控制台（正式用户路径不使用）")
     args = parser.parse_args(argv)
+
+    # 调试模式经由环境变量传给后端子进程（Supervisor._spawn_env 会继承 os.environ），
+    # 后端 run_standalone.py 检测到 AIMS_DEBUG_CONSOLE=1 时会 AllocConsole。
+    # 启动器本体是 GUI 程序，不给自己分配控制台。
+    if args.debug_console:
+        os.environ["AIMS_DEBUG_CONSOLE"] = "1"
 
     root = Path(args.root).expanduser().resolve() if args.root else _default_root()
     os.environ.setdefault("AIMS_ROOT", str(root))

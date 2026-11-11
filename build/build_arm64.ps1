@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     构建 Windows ARM64 安装包。
 

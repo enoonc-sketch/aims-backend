@@ -102,8 +102,12 @@ class Settings(BaseSettings):
     BOOTSTRAP_ADMIN_USERNAME: str = ""
     BOOTSTRAP_ADMIN_PASSWORD: str = ""
     # Development administrator, created only on an EMPTY users table when no
-    # BOOTSTRAP_ADMIN_* is given. None => automatic: True outside production.
-    # Always refused in production.
+    # BOOTSTRAP_ADMIN_* is given. None => automatic: False (AIMS 1.0 phase 1,
+    # report item H-2: the old implicit default silently created
+    # admin/admin123 on every development/EXE instance). Devs who actually
+    # want the convenience account must opt in explicitly with
+    # ALLOW_DEV_ADMIN=true outside production.
+    # Always refused in production regardless of this flag.
     ALLOW_DEV_ADMIN: bool | None = None
     DEV_ADMIN_USERNAME: str = "admin"
     DEV_ADMIN_PASSWORD: str = "admin123"
@@ -112,6 +116,11 @@ class Settings(BaseSettings):
 
     # Default to local SQLite for standalone / EXE mode.
     DATABASE_URL: str = "sqlite:///./aims_data/aims.db"
+
+    # PostgreSQL connection pool tuning (report item D-5; only used for non-SQLite URLs)
+    DB_POOL_SIZE: int = 10
+    DB_MAX_OVERFLOW: int = 20
+    DB_POOL_RECYCLE: int = 1800  # seconds; stay well below typical server idle timeouts
 
     AUTO_INIT_DB: bool = True
 
@@ -170,6 +179,12 @@ class Settings(BaseSettings):
     # ---- Audit ----
     AUDIT_ENABLED: bool = True
 
+    # --- 请求限流（M-7，总方案 3.4）。单机桌面部署用内存令牌桶即可 ---
+    RATE_LIMIT_ENABLED: bool = True
+    RATE_LIMIT_WINDOW_SECONDS: int = 60
+    RATE_LIMIT_API_PER_WINDOW: int = 600      # 普通 API：每 IP 每分钟
+    RATE_LIMIT_AUTH_PER_WINDOW: int = 20      # 登录/刷新：每 IP 每分钟
+
     HOST: str = "127.0.0.1"
     PORT: int = 8000
 
@@ -182,7 +197,7 @@ class Settings(BaseSettings):
     def dev_admin_allowed(self) -> bool:
         if self.is_production:
             return False
-        return True if self.ALLOW_DEV_ADMIN is None else bool(self.ALLOW_DEV_ADMIN)
+        return bool(self.ALLOW_DEV_ADMIN)  # None (unset) now means OFF
 
     @property
     def cors_origin_list(self) -> list[str]:
@@ -206,7 +221,14 @@ class Settings(BaseSettings):
 
     @property
     def docs_enabled(self) -> bool:
-        return (not self.is_production) if self.ENABLE_DOCS is None else bool(self.ENABLE_DOCS)
+        # 审计项 L-7：离线交付版（PyInstaller frozen）默认也不开 /docs——
+        # 给现场暴露完整接口地图没有价值，排障用 ENABLE_DOCS=true 显式打开。
+        if self.ENABLE_DOCS is not None:
+            return bool(self.ENABLE_DOCS)
+        if self.is_production:
+            return False
+        import sys as _sys
+        return not getattr(_sys, "frozen", False)
 
     @model_validator(mode="after")
     def validate_security(self):

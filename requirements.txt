@@ -1,4 +1,5 @@
-fastapi==0.115.0
+# >=0.115.6: starlette>=0.40 修复 CVE-2024-47874（multipart DoS，审计项 M-11）
+fastapi>=0.115.6
 uvicorn[standard]==0.30.6
 sqlalchemy==2.0.35
 psycopg2-binary==2.9.9
@@ -7,15 +8,12 @@ alembic==1.13.2
 pydantic==2.9.2
 pydantic-settings==2.5.2
 python-dotenv==1.0.1
-passlib[bcrypt]==1.7.4
-# passlib 1.7.4 reads bcrypt.__about__.__version__ to detect the backend; that
-# attribute was removed in bcrypt>=4.1, which makes passlib silently mis-detect
-# the backend and raise "password cannot be longer than 72 bytes" on every
-# hash/verify call (login is broken end-to-end). Pin bcrypt to the last
-# release that still exposes __about__ so passlib's version probe succeeds.
+# passlib 已移除（阶段 2 依赖清理）：app/core/security.py 直接使用 bcrypt，
+# 全代码库无 passlib 引用；且 passlib 1.7.4 与 bcrypt>=4.1 存在版本探测 bug。
 bcrypt==4.0.1
-python-jose[cryptography]==3.3.0
-python-multipart==0.0.9
+# PyJWT 替换已停止维护的 python-jose（CVE-2026-85394 无修复版本，审计项 M-11）
+PyJWT==2.15.1
+python-multipart>=0.0.18   # CVE-2024-53981（变形 boundary 日志 DoS，审计项 M-11）
 pgvector==0.3.4
 httpx==0.27.2
 pytest==8.3.3
@@ -32,7 +30,8 @@ scikit-learn==1.5.2        # IsolationForest anomaly scoring for /ai/diagnose
 joblib==1.4.2               # persists trained per-device diagnosis models to disk
 pandas==2.2.3               # parses uploaded CSV/Excel files for /measurements/import
 openpyxl==3.1.5              # .xlsx engine used by pandas.read_excel for /measurements/import
-xlrd==2.0.1                   # legacy .xls engine — every /import endpoint's upload button accepts .xls
+xlrd==2.0.1
+pypdf==7.0.1                 # 故障分析 PDF 文本提取（3.17.4 有 103 项已知 CVE，见安全审计报告）
 
 # --- External vendor-platform data source (Data Management: 网页抓取模块) ---
 playwright==1.47.0          # headless-browser login + click-to-download automation; run `playwright install chromium` after pip install

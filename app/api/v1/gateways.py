@@ -8,6 +8,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Response, UploadFile
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from starlette.concurrency import run_in_threadpool
 
@@ -85,11 +86,21 @@ def update_gateway(gateway_id: int, payload: GatewayUpdate, db: Session = Depend
 
 @router.delete("/{gateway_id}", status_code=204)
 def delete_gateway(gateway_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    """删除网关。被 TAG/设备引用时返回 409 并说明原因（与 devices.py 的
+    删除保护一致，避免把正常的业务冲突抛成 500）。"""
     gateway = db.get(Gateway, gateway_id)
     if not gateway:
         raise HTTPException(status_code=404, detail="Gateway not found")
-    db.delete(gateway)
-    db.commit()
+    try:
+        db.delete(gateway)
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail=("该网关已被设备或测点引用，不能直接删除。请先在设备管理里把相关设备的"
+                    "通讯配置改到其它网关后再删除。"),
+        ) from None
 
 
 @router.post("/{gateway_id}/test-connection", response_model=CommTestResult)

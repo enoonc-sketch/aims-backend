@@ -1,14 +1,23 @@
 """External data source module: CRUD (no password leak), import, continuity
 gaps -> alarm -> work order, coverage/health metrics, lab-sample linkage."""
 from datetime import datetime, timedelta, timezone
+import ipaddress
 
 from app.models.alarm import Alarm
 from app.models.device import Device
 from app.models.external_source import ExternalDatabase, ExternalSource, ExternalSyncLog
 from app.models.maintenance import LabSample, WorkOrder
 from app.models.measurement import Measurement
-from app.services import data_continuity, data_health, external_import
+from app.services import data_continuity, data_health, external_import, ssrf_guard
 from app.services.crypto_util import decrypt_secret, encrypt_secret
+
+
+def _mock_dns(monkeypatch):
+    """SSRF 校验（阶段 1.3）会解析抓取源 URL 的主机名；测试不依赖真实 DNS，
+    统一 mock 成一个公网 IP。"""
+    monkeypatch.setattr(
+        ssrf_guard, "resolve_host", lambda host: [ipaddress.ip_address("93.184.216.34")]
+    )
 
 
 def _setup(db, interval=10):
@@ -41,18 +50,33 @@ def test_crypto_roundtrip():
     assert decrypt_secret(encrypt_secret("p@ss")) == "p@ss"
 
 
-def test_source_api_never_returns_password(client):
+def test_source_api_never_returns_password(client, monkeypatch):
+    _mock_dns(monkeypatch)
     r = client.post("/api/v1/external/sources", json={
-        "name": "s", "base_url": "https://x", "login_url": "https://x/login",
+        "name": "s", "base_url": "https://vendor.example.com", "login_url": "https://vendor.example.com/login",
         "username": "u", "password": "topsecret",
     })
     assert r.status_code == 201
     assert "password_encrypted" not in r.text and "topsecret" not in r.text
     sid = r.json()["id"]
     r = client.post("/api/v1/external/databases", json={
-        "source_id": sid, "name": "d", "list_url": "https://x/d"})
+        "source_id": sid, "name": "d", "list_url": "https://vendor.example.com/d"})
     assert r.status_code == 201
     assert client.get(f"/api/v1/external/databases/{r.json()['id']}/health").status_code == 200
+
+
+def test_ssrf_guard_rejects_private_and_unresolvable_urls(client):
+    """阶段 1.3（审计项 M-3）：抓取源 URL 必须是公网 http/https 地址。"""
+    for payload, why in (
+        ({"name": "s1", "base_url": "https://127.0.0.1", "login_url": "https://127.0.0.1/login",
+          "username": "u", "password": "p"}, "loopback"),
+        ({"name": "s2", "base_url": "file:///C:/Windows/win.ini", "login_url": "https://x.invalid",
+          "username": "u", "password": "p"}, "file scheme"),
+        ({"name": "s3", "base_url": "https://192.168.1.10", "login_url": "https://192.168.1.10/login",
+          "username": "u", "password": "p"}, "RFC1918"),
+    ):
+        r = client.post("/api/v1/external/sources", json=payload)
+        assert r.status_code == 400, f"{why} should be rejected, got {r.status_code}"
 
 
 def test_import_dedup_and_unknown_device(db_session, tmp_path):
@@ -112,14 +136,15 @@ def test_database_health_counts_consecutive_failures(db_session):
     assert h["consecutive_failures"] == 2 and h["success_rate_pct"] == 33.3
 
 
-def test_refresh_without_browser_fails_cleanly_and_is_logged(client):
+def test_refresh_without_browser_fails_cleanly_and_is_logged(client, monkeypatch):
     """Manual refresh must never 500: a missing/broken browser or wrong
     selectors land in the sync log + database.last_error for the UI."""
+    _mock_dns(monkeypatch)
     sid = client.post("/api/v1/external/sources", json={
-        "name": "s", "base_url": "https://127.0.0.1:9", "login_url": "https://127.0.0.1:9/login",
+        "name": "s", "base_url": "https://vendor.example.com", "login_url": "https://vendor.example.com/login",
         "username": "u", "password": "p"}).json()["id"]
     did = client.post("/api/v1/external/databases", json={
-        "source_id": sid, "name": "d", "list_url": "https://127.0.0.1:9/d"}).json()["id"]
+        "source_id": sid, "name": "d", "list_url": "https://vendor.example.com/d"}).json()["id"]
     r = client.post(f"/api/v1/external/databases/{did}/refresh")
     assert r.status_code == 200
     body = r.json()

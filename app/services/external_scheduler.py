@@ -126,3 +126,93 @@ def init_all_jobs() -> None:
         logger.exception("Failed to load external data scheduler jobs")
     finally:
         db.close()
+
+
+# ---------------------------------------------------------------------------
+# 通讯中断自动巡检（AIMS 1.0 阶段 1，审计项 F-6）
+#
+# POST /communication/scan-stale 的逻辑以前从未被任何调度者调用——独立桌面
+# 部署时通讯中断永远只有人工点按钮才会被发现。现在按固定间隔自动巡检，
+# 与端点共用 app/services/data_health.scan_stale_tags 的同一实现。
+# ---------------------------------------------------------------------------
+COMM_STALE_SCAN_JOB_ID = "comm_stale_scan"
+
+
+def schedule_comm_stale_scan(interval_minutes: int = 5, stale_minutes: int = 15) -> None:
+    """Register (or replace) the periodic comm-stale scan job. Call once on
+    app startup alongside init_all_jobs()."""
+    scheduler = get_scheduler()
+    if scheduler is None:
+        return
+    if scheduler.get_job(COMM_STALE_SCAN_JOB_ID):
+        scheduler.remove_job(COMM_STALE_SCAN_JOB_ID)
+    from apscheduler.triggers.interval import IntervalTrigger
+
+    scheduler.add_job(
+        _run_comm_stale_scan,
+        trigger=IntervalTrigger(minutes=interval_minutes),
+        id=COMM_STALE_SCAN_JOB_ID,
+        args=[stale_minutes],
+        replace_existing=True,
+        max_instances=1,
+        coalesce=True,
+    )
+    logger.info("Scheduled comm-stale scan every %d minute(s)", interval_minutes)
+
+
+def _run_comm_stale_scan(stale_minutes: int) -> None:
+    from app.services.data_health import scan_stale_tags
+
+    SessionLocal = get_session_factory()
+    db = SessionLocal()
+    try:
+        out = scan_stale_tags(db, stale_minutes)
+        if out.comm_alarms_created:
+            logger.warning("Comm-stale scan: %d new comm alarm(s)", out.comm_alarms_created)
+    except Exception:
+        logger.exception("Scheduled comm-stale scan failed")
+    finally:
+        db.close()
+
+
+# ---------------------------------------------------------------------------
+# 数据保留清理任务（AIMS 1.0 阶段 1，审计项 D-1）
+#
+# measurements / audit_logs 等表以前无限增长（data_retention_days 键没有任何
+# 消费者）。现在每日凌晨 03:00 自动按 system_settings 里的保留天数清理。
+# ---------------------------------------------------------------------------
+RETENTION_JOB_ID = "retention_daily"
+
+
+def schedule_retention(hour: int = 3) -> None:
+    """Register the daily retention job (default 03:00 UTC). Call once on app
+    startup. Also runs one sweep at startup so long-idle machines catch up."""
+    scheduler = get_scheduler()
+    if scheduler is None:
+        return
+    if scheduler.get_job(RETENTION_JOB_ID):
+        scheduler.remove_job(RETENTION_JOB_ID)
+    from apscheduler.triggers.cron import CronTrigger
+
+    scheduler.add_job(
+        _run_retention,
+        trigger=CronTrigger(hour=hour, minute=30),
+        id=RETENTION_JOB_ID,
+        replace_existing=True,
+        max_instances=1,
+        coalesce=True,
+    )
+    logger.info("Scheduled daily retention job at %02d:30 UTC", hour)
+
+
+def _run_retention() -> None:
+    from app.services.retention import run_retention
+
+    SessionLocal = get_session_factory()
+    db = SessionLocal()
+    try:
+        run_retention(db)
+    except Exception:
+        logger.exception("Scheduled retention run failed")
+    finally:
+        db.close()

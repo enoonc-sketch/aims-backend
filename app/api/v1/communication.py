@@ -22,26 +22,29 @@ from app.schemas.communication import (
     GatewayIngestOut,
     StaleScanOut,
 )
-from app.services import comm_test, data_chain
+from app.services import comm_test, data_chain, data_health, ssrf_guard
 
 router = APIRouter(prefix="/communication", tags=["Communication"])
 
 
 @router.post("/test", response_model=CommTestResult)
 async def test_connection(
-    payload: CommTestRequest, user: User = Depends(get_current_user)
+    payload: CommTestRequest, db: Session = Depends(get_db), user: User = Depends(get_current_user)
 ) -> CommTestResult:
     """Ad-hoc communication test against any host/port — used for gateways
     (and anything else) that aren't necessarily tied to a devices/gateways
     DB row. Runs the blocking socket probe off the event loop.
 
-    Requires auth: this endpoint will happily open a TCP/Modbus connection to
-    *any* host/port the caller names, so left open it's a ready-made network
-    probe/SSRF oracle for anyone who can reach the API, not just a gateway
-    diagnostics tool for logged-in operators.
+    Requires auth, plus SSRF guarding (审计项 M-4)：已登记网关/TAG 的地址直接
+    放行（AIMS 本来就要探测局域网设备）；未登记的内网目标一律拒绝，防止
+    本接口被当成内网端口扫描 oracle。
     """
+    try:
+        host = ssrf_guard.check_probe_target(db, payload.host, payload.port)
+    except ssrf_guard.SSRFError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from None
     outcome = await run_in_threadpool(
-        comm_test.run_test, payload.host, payload.port, payload.protocol, payload.timeout
+        comm_test.run_test, host, payload.port, payload.protocol, payload.timeout
     )
     return CommTestResult(
         success=outcome.success,
@@ -140,7 +143,7 @@ def gateway_ingest(
 
 
 @router.post("/scan-stale", response_model=StaleScanOut)
-def scan_stale_tags(
+def scan_stale_tags_endpoint(
     stale_minutes: int = Query(15, ge=1, le=7 * 24 * 60, description="超过多少分钟没新数据视为通讯中断"),
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
@@ -152,69 +155,7 @@ def scan_stale_tags(
     数据恢复(网关再次 /ingest)时该报警自动关闭。
 
     从没上报过任何数据的 TAG 不算"中断"(更可能是配置问题), 只计数在 never_reported_tags。
-    这个接口是无状态的, 由外部定时调用(cron / 计划任务 / 调度器)。
+    逻辑实现在 app/services/data_health.scan_stale_tags —— 同一个函数也被后台
+    调度器每 5 分钟自动调用一次(审计项 F-6: 以前没有任何调度者调用它)。
     """
-    now = datetime.now(timezone.utc)
-    threshold = timedelta(minutes=stale_minutes)
-
-    tags = db.scalars(select(DeviceComponent).where(DeviceComponent.gateway_id.is_not(None))).all()
-    device_ids = {t.device_id for t in tags}
-    last: dict[tuple, datetime] = {}
-    if device_ids:
-        for dev_id, comp, ts in db.execute(
-            select(Measurement.device_id, Measurement.component_name, func.max(Measurement.time))
-            .where(Measurement.device_id.in_(device_ids))
-            .group_by(Measurement.device_id, Measurement.component_name)
-        ).all():
-            last[(dev_id, comp)] = _aware(ts)
-
-    gateways = {g.id: g for g in db.scalars(select(Gateway)).all()}
-    devices = {d.id: d for d in db.scalars(select(Device).where(Device.id.in_(device_ids))).all()} if device_ids else {}
-
-    result = StaleScanOut(stale_minutes=stale_minutes, checked_tags=len(tags))
-    gw_state: dict[int, list[bool]] = {}
-    dev_state: dict[int, list[bool]] = {}
-    for tag in tags:
-        lt = last.get((tag.device_id, tag.component_name))
-        if lt is None:
-            result.never_reported_tags += 1
-            continue
-        age = now - lt
-        is_stale = age >= threshold
-        gw_state.setdefault(tag.gateway_id, []).append(is_stale)
-        dev_state.setdefault(tag.device_id, []).append(is_stale)
-        if not is_stale:
-            continue
-        device, gw = devices[tag.device_id], gateways.get(tag.gateway_id)
-        minutes = int(age.total_seconds() // 60)
-        entry = {
-            "device_code": device.device_code, "component_name": tag.component_name,
-            "gateway_code": gw.gateway_code if gw else None, "tag_address": tag.tag_address,
-            "last_data_at": lt.isoformat(), "silent_minutes": minutes,
-        }
-        if not data_chain.open_alarm_exists(db, device.id, component_name=tag.component_name, alarm_type="comm"):
-            alarm, _ = data_chain.raise_alarm(
-                db, device, tag.component_name, alarm_type="comm", severity="warning",
-                message=(
-                    f"{device.device_code} {tag.component_name} 数据中断 {minutes} 分钟"
-                    f"（网关 {gw.gateway_code if gw else '-'}，地址 {tag.tag_address or '-'}）"
-                ),
-                triggered_at=now,
-            )
-            entry["alarm_id"] = alarm.id
-            result.comm_alarms_created += 1
-        result.stale_tags.append(entry)
-
-    for gid, flags in gw_state.items():
-        gw = gateways.get(gid)
-        if gw is not None and flags and all(flags) and gw.status != "offline":
-            gw.status = "offline"
-            result.gateways_marked_offline.append(gw.gateway_code)
-    for did, flags in dev_state.items():
-        dev = devices.get(did)
-        if dev is not None and flags and all(flags) and dev.status == "online":
-            dev.status = "offline"
-            result.devices_marked_offline.append(dev.device_code)
-
-    db.commit()
-    return result
+    return data_health.scan_stale_tags(db, stale_minutes)

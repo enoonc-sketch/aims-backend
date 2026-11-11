@@ -147,15 +147,71 @@ def _bootstrap_managed(base: Path):
 
 
 
+def _has_console() -> bool:
+    """本进程是否真的有一个可用的控制台（GUI 子系统 EXE 平时没有）。"""
+    if os.name != "nt":
+        return sys.stdin is not None and sys.stdin.isatty()
+    import ctypes
+
+    return ctypes.windll.kernel32.GetConsoleWindow() != 0
+
+
+def _attach_debug_console() -> None:
+    """开发调试模式：给 GUI 子系统的 EXE 现场分配一个控制台窗口。
+
+    触发条件（缺一不可）：打包成 EXE + 显式 AIMS_DEBUG_CONSOLE=1。
+    正式用户路径（桌面快捷方式 / 启动器）永远不设这个变量，因此不会弹窗；
+    开发人员用「AIMS 调试模式」快捷方式或 run_exe_debug.bat 查看输出。
+    """
+    if os.name != "nt":
+        return  # 源码运行本来就有控制台，无需处理
+    if os.environ.get("AIMS_DEBUG_CONSOLE", "").strip().lower() not in ("1", "true", "yes", "on"):
+        return
+    import ctypes
+
+    kernel32 = ctypes.windll.kernel32
+    if kernel32.GetConsoleWindow():
+        return  # 已经有控制台（例如源码运行）：不要重复分配
+    ATTACH_PARENT_PROCESS = -1
+    # 优先挂到父进程（开发人员从 cmd / run_exe_debug.bat 启动 EXE）的控制台；
+    # 没有父控制台（双击调试快捷方式）再现场分配一个新窗口。
+    if not kernel32.AttachConsole(ATTACH_PARENT_PROCESS):
+        if not kernel32.AllocConsole():
+            return
+    # 把标准流重新接到新控制台上；崩溃日志/uvicorn 输出恢复可见。
+    try:
+        sys.stdin = open("CONIN$", "r", buffering=1)
+        sys.stdout = open("CONOUT$", "w", buffering=1, encoding="utf-8", errors="replace")
+        sys.stderr = open("CONOUT$", "w", buffering=1, encoding="utf-8", errors="replace")
+        os.dup2(sys.stdout.fileno(), 1)
+        os.dup2(sys.stderr.fileno(), 2)
+    except Exception:
+        pass
+
+
 def _pause(msg: str = "Press Enter to exit...") -> None:
+    """启动失败时停住进程让用户读到原因——但绝不能为此弹 CMD 窗口。
+
+    * 有控制台（源码运行 / 调试模式 / 从 cmd 启动）：按回车退出；
+    * GUI 子系统 EXE（正式用户路径）：用 Windows 原生 MessageBox 弹窗，
+      点确定退出。原来的 `os.system("pause")` 会瞬间拉起一个 cmd.exe
+      窗口，在 GUI 模式下正是"莫名其妙闪出黑框"的来源之一。
+    """
+    if os.name == "nt" and not _has_console():
+        try:
+            import ctypes
+
+            MB_OK, MB_ICONERROR = 0x0, 0x10
+            ctypes.windll.user32.MessageBoxW(None, msg, "AIMS Backend", MB_OK | MB_ICONERROR)
+            return
+        except Exception:
+            pass
     try:
         if sys.stdin and sys.stdin.isatty():
             input(msg)
         else:
-            if os.name == "nt":
-                os.system("pause")
-            else:
-                input(msg)
+            import time
+            time.sleep(30)
     except Exception:
         try:
             import time
@@ -476,6 +532,10 @@ def _probe_health(base_url: str, scheme: str, timeout: float = 0.5):
 
 
 def main() -> int:
+    # GUI 子系统 EXE：显式调试模式（AIMS_DEBUG_CONSOLE=1）时先分配控制台，
+    # 让部署/启动阶段的 print 与 traceback 恢复可见；普通用户路径不设该变量。
+    if getattr(sys, "frozen", False):
+        _attach_debug_console()
     base = _base_dir()
 
     # `AIMS-Backend.exe deploy <cmd>` — installer / operations CLI. Handled before

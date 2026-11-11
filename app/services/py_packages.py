@@ -140,7 +140,10 @@ class PackageInstallError(Exception):
 
 def _run_pip(args: list[str]) -> subprocess.CompletedProcess:
     cmd = [sys.executable, "-m", "pip", "install", "--no-cache-dir", "--prefer-binary", *args]
-    return subprocess.run(cmd, capture_output=True, text=True, timeout=INSTALL_TIMEOUT_SECONDS)
+    # CREATE_NO_WINDOW（仅 Windows 有效，其他平台为 0）：pip 是控制台程序，
+    # 若本进程是 GUI 子系统 EXE，裸调用会短暂弹出黑窗。
+    return subprocess.run(cmd, capture_output=True, text=True, timeout=INSTALL_TIMEOUT_SECONDS,
+                          creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
 
 
 def _externally_managed_message(pip_args: list[str]) -> str:

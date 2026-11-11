@@ -453,3 +453,28 @@ def adjust_stock(part_id: int, payload: SparePartStockAdjust, db: Session = Depe
     db.commit()
     db.refresh(part)
     return part
+
+
+# ---------------------------------------------------------------------------
+# 故障分析 PDF 解析（AIMS 1.0 阶段 7：替换前端"检测到 3 个故障模式"的假结果）
+#
+# 真实流程：上传 → 体积/类型校验（复用 upload_security）→ pypdf 提取文本层 →
+# 抽取位号/报警码/测量值/故障关键词 → 规则包给候选诊断（只建议、不落库）。
+# 扫描件无文本层时如实返回 422，不编造内容。
+# ---------------------------------------------------------------------------
+@router.post("/fault-pdf/analyze")
+async def analyze_fault_pdf(
+    file: UploadFile = File(...),
+    component_name: str = Query("", description="可选：该 PDF 针对的测量组分，用于规则匹配"),
+    user: User = Depends(get_current_user),
+):
+    from app.services import fault_pdf
+    from app.services.upload_security import UploadRejected, read_upload
+
+    try:
+        upload = await read_upload(file, allowed_exts=("pdf",))
+        return fault_pdf.analyze_pdf(upload.raw, filename=upload.filename, component_name=component_name)
+    except UploadRejected as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail)
+    except fault_pdf.PdfParseError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))

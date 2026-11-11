@@ -55,6 +55,22 @@ def _get_template(db: Session, template_id: int) -> TemplateRegistry:
     return tpl
 
 
+def _ensure_can_modify(tpl: TemplateRegistry, user: User) -> None:
+    """内容级修改（编辑/删除/版本回退）的统一权限闸门。
+
+    * 系统内置模板：只允许管理员做受控修改（改名/改分类在任何情况下都被拒绝）；
+    * 自定义 / 导入模板：只有创建者本人或管理员可以修改、删除——其他用户
+      只能查看、收藏、复制出自己独立副本或导出，保证模板之间相互隔离。
+    """
+    if user.is_superuser:
+        return
+    if tpl.source == "system":
+        raise HTTPException(status_code=403, detail="系统内置模板只有管理员可以修改。")
+    if tpl.created_by is not None and tpl.created_by != user.id:
+        raise HTTPException(status_code=403,
+                            detail="只有模板创建者或管理员可以修改/删除该模板。如需使用，可先「复制」出自己的副本。")
+
+
 # ============================================================== 分类与列表 ===
 @router.get("/categories")
 def list_categories() -> dict:
@@ -139,10 +155,11 @@ def get_template(template_id: int, db: Session = Depends(get_db),
 @router.put("/{template_id}", response_model=TemplateOut)
 def update_template(template_id: int, payload: TemplateUpdate,
                     db: Session = Depends(get_db), user: User = Depends(get_current_user)):
-    """编辑模板。改了 content 就追加新版本（旧版本保留，可回退）；系统模板仅允许改描述等次要字段。"""
+    """编辑模板。改了 content 就追加新版本（旧版本保留，可回退）；系统模板仅允许管理员改描述等次要字段。"""
     tpl = _get_template(db, template_id)
     if tpl.source == "system" and (payload.name is not None or payload.category is not None):
         raise HTTPException(status_code=403, detail="系统内置模板不允许改名或改分类。")
+    _ensure_can_modify(tpl, user)
     data = payload.model_dump(exclude_unset=True)
     content = data.pop("content", None)
     changelog = data.pop("changelog", None)
@@ -166,6 +183,7 @@ def delete_template(template_id: int, db: Session = Depends(get_db),
     tpl = _get_template(db, template_id)
     if tpl.source == "system":
         raise HTTPException(status_code=403, detail="系统内置模板不允许删除。")
+    _ensure_can_modify(tpl, user)  # 只有创建者或管理员可以删除自定义/导入模板
     db.delete(tpl)  # versions/usage/dependencies 走 CASCADE
     tc.record_audit(db, user, "TEMPLATE_DELETE", "templates", tpl.id, f"删除模板「{tpl.name}」")
     db.commit()
@@ -236,7 +254,7 @@ def _import_one(db: Session, filename: str, data: bytes, *, confirm: bool,
     if not confirm:
         try:
             preview = tc.preview_import(db, pkg)
-        except TemplateError as exc:
+        except tc.TemplateError as exc:
             tc.record_import_failure(db, filename=filename, reason=str(exc), size=len(data), user=user)
             return ImportPreviewOut(ok=False, filename=filename, error=str(exc))
         return ImportPreviewOut(ok=True, filename=filename, **preview)
@@ -378,6 +396,7 @@ def restore_version(template_id: int, version: int, db: Session = Depends(get_db
                     user: User = Depends(get_current_user)):
     """版本回退：把旧版本内容追加为新版本（历史不丢，回退本身也可回退）。"""
     tpl = _get_template(db, template_id)
+    _ensure_can_modify(tpl, user)
     try:
         content = tc.get_version_content(db, tpl, version)
     except tc.TemplateError as exc:

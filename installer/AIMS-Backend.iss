@@ -16,7 +16,7 @@
 ; 升版时 MyAppVersion 要和 app/main.py 里的版本号一起改。
 
 #define MyAppName "AIMS Backend"
-#define MyAppVersion "0.6.0"
+#define MyAppVersion "1.0.0"
 #define MyAppExeName "AIMS-Backend.exe"
 
 [Setup]

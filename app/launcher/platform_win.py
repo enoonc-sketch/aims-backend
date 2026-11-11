@@ -149,7 +149,10 @@ def open_app_window(url: str) -> str:
                 [str(exe), f"--app={url}", f"--user-data-dir={profile}",
                  "--no-first-run", "--no-default-browser-check", "--window-size=1440,900"],
                 close_fds=True,
-                creationflags=getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0),
+                # CREATE_NO_WINDOW 兜底：浏览器本体是 GUI 程序不会弹控制台，
+                # 但加上无副作用，可防被替换成控制台版启动器时报黑框。
+                creationflags=getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+                | getattr(subprocess, "CREATE_NO_WINDOW", 0),
             )
             return f"app-window:{exe.name}"
         except Exception as exc:  # noqa: BLE001
@@ -268,7 +271,10 @@ def create_shortcut(path: Path, target: Path, *, args: str = "", workdir: Path |
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         res = subprocess.run(["powershell", "-NoProfile", "-NonInteractive", "-Command", script],
-                             capture_output=True, text=True, timeout=60)
+                             capture_output=True, text=True, timeout=60,
+                             # powershell.exe 是控制台程序：GUI 启动器里调用必须
+                             # 压掉窗口，否则创建快捷方式时闪出蓝色 PowerShell 框。
+                             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
         if res.returncode != 0:
             logger.warning("shortcut failed: %s", res.stderr.strip()[:300])
         return res.returncode == 0

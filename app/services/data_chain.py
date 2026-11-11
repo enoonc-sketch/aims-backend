@@ -26,6 +26,7 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.models.ai import AIDiagnosis
@@ -74,10 +75,25 @@ def get_or_create_tag(
             tag_address=tag_address,
         )
         db.add(tag)
-        db.flush()
-        if gateway is not None:
-            link_gateway(db, device, gateway)
-        return tag
+        # 并发安全（审计项 D-6）：两个并发批次（实时推送+导入）可能同时走到这里，
+        # 撞 (device_id, component_name) 唯一索引。用 SAVEPOINT 包住插入——失败只
+        # 回滚这次插入（保留本事务里已完成的工作），然后采用并发方写入的那一行。
+        try:
+            with db.begin_nested():
+                db.flush()
+        except IntegrityError:
+            tag = db.scalar(
+                select(DeviceComponent).where(
+                    DeviceComponent.device_id == device.id,
+                    DeviceComponent.component_name == component_name,
+                )
+            )
+            if tag is None:
+                raise
+        else:
+            if gateway is not None:
+                link_gateway(db, device, gateway)
+            return tag
 
     if gateway is not None and tag.gateway_id is None:
         tag.gateway_id = gateway.id
@@ -235,6 +251,60 @@ def evaluate_alarm_rules(db: Session, device: Device, component_name: str, value
     return out.alarms
 
 
+def _bulk_upsert_measurements(db: Session, rows: list[Measurement], chunk: int = 5_000) -> None:
+    """写入读数；主键冲突时更新，而不是抛 IntegrityError。
+
+    (time, device_id, component_name) 是 measurements 的主键。同一时刻同一测点被
+    重复上报/重复导入，在工业现场是常态：网关断线重连会重发缓存数据、现场补录会
+    重导同一份 CSV、外部云同步会重叠时间窗。原来的 `bulk_save_objects` 遇到冲突
+    直接抛 UniqueViolation，用户看到 HTTP 500 + 一整页堆栈，而数据其实只是重复。
+
+    这里改成幂等写入：已存在则用本次的值/质量覆盖（这正符合"重导是为了修正"的
+    现场语义），行数统计仍按本次提交的行数返回。
+
+    分块仍保留（默认 5000 行/批，避免超参数上限与峰值内存翻倍），单事务语义不变。
+    """
+    if not rows:
+        return
+    bind = db.get_bind() if hasattr(db, "get_bind") else None
+    dialect = getattr(getattr(bind, "dialect", None), "name", "")
+
+    def as_dict(r: Measurement) -> dict:
+        return {
+            "time": r.time,
+            "device_id": r.device_id,
+            "component_name": r.component_name,
+            "value": r.value,
+            "quality": r.quality,
+            "import_id": r.import_id,
+        }
+
+    for i in range(0, len(rows), chunk):
+        part = rows[i:i + chunk]
+        if dialect in ("postgresql", "sqlite"):
+            if dialect == "postgresql":
+                from sqlalchemy.dialects.postgresql import insert as dialect_insert
+            else:
+                from sqlalchemy.dialects.sqlite import insert as dialect_insert
+            # 用 executemany（把参数字典列表交给 execute）而不是 insert().values([...])：
+            # 后者会编译成一条几万个参数的巨型 SQL，PG 解析/绑定开销随行数非线性上升，
+            # 实测 2 万行从 ~1.9s 退化到 ~10s。executemany 走 psycopg2 的批量执行，
+            # 单行语义不变（冲突仍按 ON CONFLICT DO UPDATE 处理）。
+            stmt = dialect_insert(Measurement)
+            stmt = stmt.on_conflict_do_update(
+                index_elements=["time", "device_id", "component_name"],
+                set_={
+                    "value": stmt.excluded.value,
+                    "quality": stmt.excluded.quality,
+                    "import_id": stmt.excluded.import_id,
+                },
+            )
+            db.execute(stmt, [as_dict(r) for r in part])
+        else:
+            # 其它方言（理论上不会走到）保持原行为，至少不静默丢数据
+            db.bulk_save_objects(part)
+
+
 def process_readings(
     db: Session, device: Device, rows: list[Measurement], *, realtime: bool,
 ) -> ChainOutcome:
@@ -253,7 +323,11 @@ def process_readings(
 
     report = data_quality.assess_rows(db, device, rows, realtime=realtime)
     out.quality = report.summary()
-    db.bulk_save_objects(rows)  # 质量已定级, 现在才写库 (assess_rows 需要读"本批之前"的历史)
+    # 审计项 D-2：分块写入降低峰值内存（10 万行一次 bulk_save_objects 会临时
+    # 翻倍占用），仍保持单事务语义——外部同步等调用方依赖"中途失败整体回滚"，
+    # 这里不能中途提交；孤儿 processing 批次由启动时的
+    # retention.recover_orphan_imports 回收。
+    _bulk_upsert_measurements(db, rows)
 
     now = datetime.now(timezone.utc)
     by_comp: dict[str, list[Measurement]] = {}

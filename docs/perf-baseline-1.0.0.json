@@ -1,0 +1,177 @@
+{
+  "api": "http://127.0.0.1:8000",
+  "started_at": "2026-11-11T13:19:59",
+  "latency": [
+    {
+      "endpoint": "/health",
+      "label": "存活探针",
+      "status": "ok",
+      "n": 30,
+      "p50_ms": 0.6,
+      "p95_ms": 1.2,
+      "max_ms": 1.4,
+      "mean_ms": 0.7
+    },
+    {
+      "endpoint": "/api/v1/dashboard/stats",
+      "label": "看板统计",
+      "status": "ok",
+      "n": 30,
+      "p50_ms": 1.5,
+      "p95_ms": 2.5,
+      "max_ms": 5.8,
+      "mean_ms": 1.8
+    },
+    {
+      "endpoint": "/api/v1/devices?limit=50",
+      "label": "设备列表",
+      "status": "ok",
+      "n": 30,
+      "p50_ms": 2.7,
+      "p95_ms": 3.1,
+      "max_ms": 3.2,
+      "mean_ms": 2.8
+    },
+    {
+      "endpoint": "/api/v1/templates",
+      "label": "模板中心列表",
+      "status": "ok",
+      "n": 30,
+      "p50_ms": 4.9,
+      "p95_ms": 5.2,
+      "max_ms": 6.8,
+      "mean_ms": 5.0
+    },
+    {
+      "endpoint": "/api/v1/alarms?limit=50",
+      "label": "报警列表",
+      "status": "ok",
+      "n": 30,
+      "p50_ms": 1.5,
+      "p95_ms": 2.2,
+      "max_ms": 3.1,
+      "mean_ms": 1.6
+    },
+    {
+      "endpoint": "/api/v1/system/components",
+      "label": "组件信息",
+      "status": "ok",
+      "n": 30,
+      "p50_ms": 2.5,
+      "p95_ms": 3.2,
+      "max_ms": 4.9,
+      "mean_ms": 2.6
+    }
+  ],
+  "throughput": {
+    "threads": 8,
+    "per_thread": 50,
+    "requests": 400,
+    "ok": 400,
+    "errors": 0,
+    "error_samples": [],
+    "elapsed_s": 1.43,
+    "qps": 278.8,
+    "p95_ms": 45.8
+  },
+  "import": {
+    "csv_rows": 20000,
+    "measurements": 60000,
+    "status_code": 201,
+    "ok": true,
+    "elapsed_s": 4.53,
+    "rows_per_second": 13251.3,
+    "detail": ""
+  },
+  "soak": {
+    "duration_s": 90,
+    "requests": 865,
+    "errors": 0,
+    "rss_start_mb": 266.4,
+    "rss_end_mb": 266.3,
+    "rss_growth_mb": -0.1,
+    "threads_start": 67,
+    "threads_end": 57,
+    "samples": [
+      {
+        "t_s": 0.0,
+        "rss_mb": 266.4,
+        "threads": 67,
+        "fds": 30
+      },
+      {
+        "t_s": 7.3,
+        "rss_mb": 266.2,
+        "threads": 57,
+        "fds": 23
+      },
+      {
+        "t_s": 14.6,
+        "rss_mb": 266.2,
+        "threads": 57,
+        "fds": 23
+      },
+      {
+        "t_s": 22.0,
+        "rss_mb": 266.2,
+        "threads": 57,
+        "fds": 23
+      },
+      {
+        "t_s": 29.3,
+        "rss_mb": 266.2,
+        "threads": 57,
+        "fds": 23
+      },
+      {
+        "t_s": 36.6,
+        "rss_mb": 266.2,
+        "threads": 57,
+        "fds": 23
+      },
+      {
+        "t_s": 43.9,
+        "rss_mb": 266.2,
+        "threads": 57,
+        "fds": 23
+      },
+      {
+        "t_s": 51.2,
+        "rss_mb": 266.2,
+        "threads": 57,
+        "fds": 23
+      },
+      {
+        "t_s": 58.6,
+        "rss_mb": 266.2,
+        "threads": 57,
+        "fds": 23
+      },
+      {
+        "t_s": 65.9,
+        "rss_mb": 266.2,
+        "threads": 57,
+        "fds": 23
+      },
+      {
+        "t_s": 73.2,
+        "rss_mb": 266.3,
+        "threads": 57,
+        "fds": 23
+      },
+      {
+        "t_s": 80.5,
+        "rss_mb": 266.3,
+        "threads": 57,
+        "fds": 23
+      },
+      {
+        "t_s": 87.8,
+        "rss_mb": 266.3,
+        "threads": 57,
+        "fds": 23
+      }
+    ],
+    "verdict": "stable"
+  }
+}

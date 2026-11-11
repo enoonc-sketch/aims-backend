@@ -21,7 +21,11 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
 import bcrypt as _bcrypt                      # required — ImportError is intentional
-from jose import JWTError, jwt                # required — ImportError is intentional
+import jwt as pyjwt                           # required — ImportError is intentional
+# 审计项 M-11：python-jose 已停止维护（CVE-2024-33663/33664 修复不完整，
+# CVE-2026-85394 无修复版本），迁移到 PyJWT。本项目只签发/校验 HS256 对称
+# 令牌，两个库 API 差异集中在 decode_access_token 一处。
+from jwt import PyJWTError
 
 from app.core.config import settings
 
@@ -119,7 +123,7 @@ def create_access_token(subject: str | int, extra: Optional[dict[str, Any]] = No
     for k, v in (extra or {}).items():
         if k not in _RESERVED_CLAIMS:
             payload[k] = v
-    return jwt.encode(payload, settings.SECRET_KEY, algorithm=_JWT_ALGORITHM)
+    return pyjwt.encode(payload, settings.SECRET_KEY, algorithm=_JWT_ALGORITHM)
 
 
 def decode_access_token(token: str) -> Optional[dict[str, Any]]:
@@ -127,19 +131,19 @@ def decode_access_token(token: str) -> Optional[dict[str, Any]]:
     if not token or token.count(".") != 2:
         return None
     try:
-        payload = jwt.decode(
+        # PyJWT options 语义：require=[...] 与 jose 的 require_* 一一对应；
+        # algorithms 显式钉死 HS256，杜绝 alg=none / RS-HS 混淆。
+        payload = pyjwt.decode(
             token,
             settings.SECRET_KEY,
-            algorithms=[_JWT_ALGORITHM],          # pins the algorithm: no "none"/RS-HS confusion
+            algorithms=[_JWT_ALGORITHM],
             audience=settings.JWT_AUDIENCE,
             issuer=settings.JWT_ISSUER,
             options={
-                "require_exp": True, "require_iat": True, "require_nbf": True,
-                "require_sub": True, "require_iss": True, "require_aud": True,
-                "require_jti": True,
+                "require": ["exp", "iat", "nbf", "sub", "iss", "aud", "jti"],
             },
         )
-    except (JWTError, ValueError):
+    except (PyJWTError, ValueError):
         return None
     if payload.get("type") != "access":
         return None

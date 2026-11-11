@@ -104,11 +104,20 @@ def test_write_endpoint_succeeds_once_authenticated(anon_client, db_session):
     assert resp.status_code == 201, resp.text
 
 
-def test_read_endpoints_remain_open(anon_client):
-    """Documented scope of this pass: reads stay open, only writes require auth."""
+def test_read_endpoints_require_auth_now(anon_client):
+    """AIMS 1.0 phase-1 hardening (report item H-1): the previous pass left
+    reads open; every business GET now requires a logged-in caller, including
+    the routers that only ever had GETs (devices/alarms/assets/gateways)."""
     for path in ("/api/v1/devices", "/api/v1/alarms", "/api/v1/assets", "/api/v1/gateways"):
         resp = anon_client.get(path)
-        assert resp.status_code == 200, f"GET {path} should stay open, got {resp.status_code}"
+        assert resp.status_code == 401, f"GET {path} should require auth now, got {resp.status_code}"
+    # The previously-unauthenticated write-back endpoint GET /ai/health/{id}
+    # (it inserts an AIHealthScore row) must reject anonymous callers too.
+    resp = anon_client.get("/api/v1/ai/health/1")
+    assert resp.status_code == 401
+    # And the vendor-account-metadata endpoints are superuser-only.
+    resp = anon_client.get("/api/v1/external/sources")
+    assert resp.status_code == 401
 
 
 def test_audit_logs_require_superuser(anon_client, db_session):

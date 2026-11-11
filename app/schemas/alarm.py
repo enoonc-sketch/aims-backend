@@ -30,7 +30,10 @@ class AlarmCreate(BaseModel):
 
 
 class AlarmAck(BaseModel):
-    user_id: int
+    """报警确认（兼容旧客户端）。user_id 不再被采信：确认人一律取当前登录用户，
+    否则任何登录用户都能伪造"谁确认了这条报警"（审计完整性问题）。"""
+
+    user_id: Optional[int] = None
 
 
 class AlarmRuleOut(BaseModel):

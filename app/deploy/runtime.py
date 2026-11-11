@@ -42,6 +42,19 @@ def bootstrap(base: Path, *, announce=None) -> dict[str, Any]:
     layout = load_layout(base)
     info: dict[str, Any] = {"managed": False}
     if not managed_mode(layout):
+        # 危险降级防护：pg_ctl 就位但数据目录不在，说明 AIMS_DATA_ROOT / AIMS_PG_DATA
+        # 与安装时不一致（换了盘、改了环境变量、数据目录被移走）。此时如果继续启动，
+        # 应用会回落 SQLite 并"看起来一切正常"，用户的历史数据却还在原来的 PostgreSQL 里
+        # ——比直接报错危险得多，所以这里必须拦住。
+        if (layout.pg_bin / layout.exe_name("pg_ctl")).is_file() and not layout.pg_data.is_dir():
+            raise DeploymentError(
+                f"数据库程序已就位，但数据目录不存在：{layout.pg_data}\n"
+                f"当前数据根目录：{layout.base}\n"
+                "这通常意味着数据目录被移动过，或 AIMS_DATA_ROOT / AIMS_PG_DATA 指向了别处。\n"
+                "继续启动会以空库运行，看起来正常但历史数据仍在原目录里。\n"
+                "请确认数据目录位置后重新启动；如确需以新库运行，请先执行 "
+                "deploy provision 并显式指定新的数据目录。"
+            )
         return info
     info["managed"] = True
 

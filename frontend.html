@@ -178,6 +178,7 @@ tr:hover{background:#f5f5f5}
 <button class="nav-btn active" onclick="showPage('dash',this)">Dashboard</button>
 <button class="nav-btn" onclick="showPage('dev',this)">Devices</button>
 <button class="nav-btn" onclick="showPage('comm',this)">Comm</button>
+<button class="nav-btn" onclick="showPage('alarm',this)">Alarms · 报警</button>
 <button class="nav-btn" onclick="showPage('data',this)">Data</button>
 <button class="nav-btn" onclick="showPage('danal',this)">Data Analysis</button>
 <button class="nav-btn" onclick="showPage('ai',this)">AI Center</button>
@@ -201,6 +202,7 @@ tr:hover{background:#f5f5f5}
 </div>
 <div class="content">
 <div class="page active" id="page-dash">
+<div id="demoBanner" class="alert-item alert-warning" style="display:none;margin-bottom:12px">⚠️ 当前展示的是演示数据（未连接后端）。配置 API 地址并登录后会自动切换为真实数据。</div>
 <div class="card-grid">
 <div class="stat-card"><div class="label">Total Devices</div><div class="value" id="stat1">0</div></div>
 <div class="stat-card online"><div class="label">Online</div><div class="value" id="stat2">0</div></div>
@@ -245,6 +247,38 @@ tr:hover{background:#f5f5f5}
 <div class="table-wrap">
 <table><thead><tr><th>Gateway</th><th>Protocol</th><th>Host</th><th>Port</th><th>Status</th><th>Last Test</th><th>Actions</th></tr></thead>
 <tbody id="gwBody"></tbody></table>
+</div>
+</div>
+<div class="page" id="page-alarm">
+<div class="tabs">
+<button class="tab-btn active" onclick="switchAlarmTab('list',this)">Alarm List</button>
+<button class="tab-btn" onclick="switchAlarmTab('rules',this)">Alarm Rules</button>
+</div>
+<div class="tc active" id="alarm-list">
+<div class="toolbar">
+<select id="alarmStatusFilter" class="da-select" style="width:auto" onchange="loadAlarms()">
+<option value="">全部状态</option><option value="active">未确认 (active)</option>
+<option value="acknowledged">已确认</option><option value="resolved">已解决</option>
+</select>
+<select id="alarmSeverityFilter" class="da-select" style="width:auto" onchange="loadAlarms()">
+<option value="">全部等级</option><option value="critical">严重</option>
+<option value="warning">警告</option><option value="normal">提示 (normal)</option>
+</select>
+<button class="btn btn-success" onclick="loadAlarms()">刷新</button>
+<span id="alarmSummary" style="margin-left:auto;font-size:13px;color:#666"></span>
+</div>
+<div class="table-wrap"><table>
+<thead><tr><th>ID</th><th>触发时间</th><th>设备</th><th>组分</th><th>类型</th><th>等级</th><th>状态</th><th>描述</th><th>操作</th></tr></thead>
+<tbody id="alarmBody"><tr><td colspan="9" style="text-align:center;color:#999">Loading...</td></tr></tbody>
+</table></div>
+</div>
+<div class="tc" id="alarm-rules">
+<div class="toolbar"><button class="btn btn-success" onclick="loadAlarmRules()">刷新规则</button>
+<span style="font-size:12px;color:#999;margin-left:8px">阈值报警规则；超过 high_limit_delta 时由数据链自动开报警</span></div>
+<div class="table-wrap"><table>
+<thead><tr><th>ID</th><th>规则/组分</th><th>类型</th><th>上下限</th><th>等级</th><th>启用</th></tr></thead>
+<tbody id="alarmRuleBody"><tr><td colspan="6" style="text-align:center;color:#999">Loading...</td></tr></tbody>
+</table></div>
 </div>
 </div>
 <div class="page" id="page-data">
@@ -786,6 +820,9 @@ tr:hover{background:#f5f5f5}
 <button class="tab-btn active" onclick="switchSysTab('login',this)">Login</button>
 <button class="tab-btn" onclick="switchSysTab('roles',this)">Roles</button>
 <button class="tab-btn" onclick="switchSysTab('settings',this)">Settings</button>
+<button class="tab-btn" onclick="switchSysTab('users',this)">Users</button>
+<button class="tab-btn" onclick="switchSysTab('audit',this)">Audit Log</button>
+<button class="tab-btn" onclick="switchSysTab('components',this)">Components</button>
 </div>
 <div class="tc active" id="sys-login">
 <div class="login-form">
@@ -818,6 +855,24 @@ tr:hover{background:#f5f5f5}
 <tr><td>User Management</td><td>✓</td><td>-</td><td>-</td><td>-</td></tr>
 </tbody></table>
 </div>
+</div>
+<div class="tc" id="sys-users">
+<h3 style="margin-bottom:12px">用户管理</h3>
+<div class="table-wrap"><table>
+<thead><tr><th>ID</th><th>用户名</th><th>邮箱</th><th>状态</th><th>超级管理员</th><th>操作</th></tr></thead>
+<tbody id="sysUserBody"><tr><td colspan="6" style="text-align:center;color:#999">Loading...</td></tr></tbody>
+</table></div>
+</div>
+<div class="tc" id="sys-audit">
+<h3 style="margin-bottom:12px">审计日志（最近 100 条）</h3>
+<div class="table-wrap"><table>
+<thead><tr><th>时间</th><th>用户</th><th>动作</th><th>对象</th><th>详情</th></tr></thead>
+<tbody id="sysAuditBody"><tr><td colspan="5" style="text-align:center;color:#999">Loading...</td></tr></tbody>
+</table></div>
+</div>
+<div class="tc" id="sys-components">
+<h3 style="margin-bottom:12px">后台组件（真实采集，不支持项如实显示）</h3>
+<div id="sysCompBox"><div class="ai-muted">加载中…</div></div>
 </div>
 <div class="tc" id="sys-settings">
 <h3 style="margin-bottom:16px">System Settings</h3>
@@ -856,6 +911,8 @@ function apiBase() {
 }
 
 // ---- Session tokens: short-lived access token + rotating refresh token ----
+// 登录失效时全站统一的中文提示文案（登录接口自身 401 是"用户名或密码错误"，不走这条）
+var AIMS_SESSION_EXPIRED_MSG = '登录已失效，请重新登录（System → Login）。';
 function aimsTokens() {
   try { return { access: localStorage.getItem('aims_token'), refresh: localStorage.getItem('aims_refresh') }; }
   catch (e) { return { access: null, refresh: null }; }
@@ -931,10 +988,10 @@ function aimsSessionExpired(msg, silent) {
   if (res) {
     res.style.display = '';
     res.className = 'login-result error';
-    res.textContent = msg || 'Your session has expired. Please sign in again.';
+    res.textContent = msg || AIMS_SESSION_EXPIRED_MSG;
   }
   var bar = document.getElementById('sessionBanner');
-  if (bar) { bar.style.display = ''; bar.textContent = msg || 'Session expired — sign in again.'; }
+  if (bar) { bar.style.display = ''; bar.textContent = msg || AIMS_SESSION_EXPIRED_MSG; }
   if (!silent) aimsShowExpiredToast(msg);
 }
 // Global notice (visible on every page) with a one-click jump to System → Login.
@@ -955,7 +1012,7 @@ function aimsShowExpiredToast(msg) {
     t.appendChild(span); t.appendChild(go); t.appendChild(x);
     document.body.appendChild(t);
   }
-  document.getElementById('sessionToastMsg').textContent = msg || 'Your session has expired. Please sign in again.';
+  document.getElementById('sessionToastMsg').textContent = msg || AIMS_SESSION_EXPIRED_MSG;
   t.style.display = 'flex';
 }
 function aimsGoToLogin() {
@@ -1005,6 +1062,7 @@ function aimsFetch(path, options) {
   if (controller) opts.signal = controller.signal;
   opts.headers = Object.assign({'Content-Type': 'application/json'}, options.headers || {});
   var token = aimsTokens().access;
+  var hadToken = !!token;   // 记住发请求时是否带过 Token：只有"登录过"的 401 才弹全局失效提示
   if (token) opts.headers['Authorization'] = 'Bearer ' + token;
   return fetch(url, opts).then(function(resp) {
     if (timer) clearTimeout(timer);
@@ -1023,6 +1081,16 @@ function aimsFetch(path, options) {
       err.httpStatus = resp.status;
       var ra = parseInt(resp.headers.get('Retry-After'), 10);
       if (!isNaN(ra)) err.retryAfter = ra;
+      if (resp.status === 401 && path.indexOf('/auth/') !== 0) {
+        // 受保护接口返回 401：曾经登录过（带过 Token）→ 全局重新认证提示；
+        // 匿名访问（从未登录）→ 保持页面内的静默提示，不弹"登录已失效"。
+        if (hadToken || retried) {
+          aimsSessionExpired(AIMS_SESSION_EXPIRED_MSG);
+          err.message = AIMS_SESSION_EXPIRED_MSG;
+        } else {
+          err.message = AIMS_SESSION_EXPIRED_MSG;
+        }
+      }
       throw err;
     });
     return resp.json();
@@ -1055,19 +1123,23 @@ function aimsUpload(path, file, extraFields, _retried) {
   var url = apiBase() + path;
   var opts = { method: 'POST', body: fd };
   var token = aimsTokens().access;
+  var hadToken = !!token;   // 同 aimsFetch：只有登录过的 401 才弹全局失效提示
   if (token) opts.headers = { 'Authorization': 'Bearer ' + token };
   return fetch(url, opts).then(function(resp) {
     if (resp.status === 401 && !_retried && aimsTokens().refresh) {
       return aimsRefresh().then(function() {
         aimsScheduleRefresh();
         return aimsUpload(path, file, extraFields, true);
-      }, function(e) { if (!aimsTokens().access) aimsSessionExpired(); throw e; });
+      }, function(e) { if (!aimsTokens().access) aimsSessionExpired(AIMS_SESSION_EXPIRED_MSG); throw e; });
     }
     return resp.json().catch(function(){ return {}; }).then(function(body) {
       if (!resp.ok) {
         var msg = aimsDetailText(body, resp.status);
         if (resp.status === 413) msg = 'File is too large for the server (limit ' + Math.round(AIMS_MAX_UPLOAD_BYTES / 1048576) + ' MB).';
-        else if (resp.status === 401) msg = 'Please sign in first (System → Login).';
+        else if (resp.status === 401) {
+          msg = '请先登录（System → Login）。';
+          if (hadToken || _retried) aimsSessionExpired(AIMS_SESSION_EXPIRED_MSG);
+        }
         else if (resp.status === 429) msg = 'Too many requests. Please wait and try again.';
         var e2 = new Error(msg); e2.httpStatus = resp.status; throw e2;
       }
@@ -1482,13 +1554,14 @@ function showPage(id, btn) {
   var page = document.getElementById('page-' + id);
   if (page) page.classList.add('active');
   if (btn) btn.classList.add('active');
-  var titles = {dash:'Dashboard',dev:'Devices',comm:'Comm',data:'Data',danal:'Data Analysis',ai:'AI Center',know:'Knowledge',tpl:'Templates · 模板中心',maint:'Maintenance',asset:'Assets',lab:'Lab',ext:'Cloud Data',sys:'System'};
+  var titles = {dash:'Dashboard',dev:'Devices',comm:'Comm',alarm:'Alarms · 报警',data:'Data',danal:'Data Analysis',ai:'AI Center',know:'Knowledge',tpl:'Templates · 模板中心',maint:'Maintenance',asset:'Assets',lab:'Lab',ext:'Cloud Data',sys:'System'};
   var _zh = (typeof translations !== 'undefined' && translations[currentLang]) ? translations[currentLang]['pageTitle_' + id] : null;
   document.getElementById('pageTitle').textContent = _zh || titles[id] || id.toUpperCase();
   if (id === 'dash') initHealthChart();
   if (id === 'danal') { initDAPage(); populateDaImportDeviceSelect(); }
   if (id === 'know') loadKnowledgeDocsFromDatabase();
   if (id === 'tpl') tplOnEnter();
+  if (id === 'alarm') { loadAlarms(); loadAlarmRules(); }
   if (id === 'maint') loadWorkOrdersFromDatabase();
   if (id === 'asset') loadAssetsFromDatabase();
   if (id === 'lab') loadLabSamplesFromDatabase();
@@ -1499,6 +1572,7 @@ function showPage(id, btn) {
 }
 
 // ===== Demo Data =====
+var OPEN_WORK_ORDERS = null;   // 真实工单数（来自 /dashboard/stats）
 var devices = [];
 var deviceCounter = 0;
 
@@ -1524,12 +1598,21 @@ function loadDemoData() {
   updateStats();
   renderDevices();
   initHealthChart();
+  var db = document.getElementById('demoBanner');
+  if (db) db.style.display = 'block';
   loadFromDatabase();
 }
 
 // Pull real rows from the FastAPI + DB backend and, if reachable, replace the
 // local demo arrays with the DB's own devices + dashboard KPIs.
 function loadFromDatabase() {
+  // 未登录时不发受保护请求：既避免首屏一串 401 控制台噪声，也让"未登录禁止访问
+  // 受保护接口"在前端行为上成立（页面照常显示，标注为演示数据）。
+  if (!aimsTokens().access) {
+    var unauth = document.getElementById('demoBanner');
+    if (unauth) unauth.style.display = 'block';
+    return;
+  }
   aimsFetch('/devices?limit=200').then(function(rows) {
     if (!Array.isArray(rows) || rows.length === 0) return;
     devices = rows.map(function(d) {
@@ -1546,6 +1629,8 @@ function loadFromDatabase() {
     });
     renderDevices();
     aiBindDeviceSelects();
+    var dbn = document.getElementById('demoBanner');
+    if (dbn) dbn.style.display = 'none';
   }).catch(function() { /* backend unreachable — keep demo devices */ });
 
   aimsFetch('/dashboard/stats').then(function(s) {
@@ -1553,6 +1638,7 @@ function loadFromDatabase() {
     document.getElementById('stat2').textContent = s.online_devices;
     document.getElementById('stat3').textContent = s.warning_devices;
     document.getElementById('stat4').textContent = s.fault_devices;
+    if (typeof s.open_work_orders === 'number') OPEN_WORK_ORDERS = s.open_work_orders;
     document.getElementById('stat5').textContent = s.open_work_orders;
   }).catch(function() { /* backend unreachable — keep demo KPIs */ });
 }
@@ -1565,7 +1651,9 @@ function updateStats() {
   document.getElementById('stat2').textContent = online;
   document.getElementById('stat3').textContent = alarms;
   document.getElementById('stat4').textContent = faults;
-  document.getElementById('stat5').textContent = Math.floor(Math.random()*10)+1;
+  // 工单数只能来自数据库；未连后端时如实显示"—"，不编造
+  var s5 = document.getElementById('stat5');
+  if (s5) s5.textContent = (typeof OPEN_WORK_ORDERS === 'number') ? OPEN_WORK_ORDERS : '—';
 }
 
 function renderDevices() {
@@ -1601,7 +1689,12 @@ function openAddDevice() {
 }
 
 function refreshData() {
-  loadDemoData();
+  // 先按后端真实数据刷新；后端不可达时才回退到演示数据（并明确标注为演示）
+  loadFromDatabase();
+  loadGatewaysFromDatabase();
+  setTimeout(function() {
+    if (devices.length === 0) loadDemoData();
+  }, 1500);
 }
 
 function exportDevices() {
@@ -1943,6 +2036,7 @@ var gateways = [
 // Pull real gateway rows from the backend and, if reachable, replace the
 // local demo rows — mirrors loadFromDatabase() for devices.
 function loadGatewaysFromDatabase() {
+  if (!aimsTokens().access) return;   // 未登录：不发受保护请求（同 loadFromDatabase）
   aimsFetch('/gateways?limit=200').then(function(rows) {
     if (!Array.isArray(rows)) return;
     gateways = rows.map(function(g) {
@@ -1974,8 +2068,8 @@ function renderGateways() {
       var latency = (g.lastTest.latency_ms != null) ? (' ' + g.lastTest.latency_ms + 'ms') : '';
       lastTestHtml = '<span style="color:'+color+'" title="'+(g.lastTest.message||'').replace(/"/g,'&quot;')+'">'+icon+latency+'</span>';
     }
-    tbody.innerHTML += '<tr><td>'+g.name+'</td><td>'+g.protocol+'</td><td>'+g.host+'</td><td>'+g.port+'</td>'
-      + '<td><span class="tag '+sc+'">'+g.status+'</span></td>'
+    tbody.innerHTML += '<tr><td>'+escHtml(g.name)+'</td><td>'+escHtml(g.protocol)+'</td><td>'+escHtml(g.host)+'</td><td>'+escHtml(g.port)+'</td>'
+      + '<td><span class="tag '+sc+'">'+escHtml(g.status)+'</span></td>'
       + '<td>'+lastTestHtml+'</td>'
       + '<td><button class="btn btn-gray" onclick="testGateway('+i+')">Test</button> '
       + '<button class="btn btn-danger" onclick="removeGateway('+i+')">Delete</button></td></tr>';
@@ -2462,8 +2556,8 @@ function runPrediction() {
   var hours = Math.max(1, Math.min(168, parseInt(aiEl('predHours').value, 10) || 24));
   if (!comp) { out.innerHTML = '<div class="alert-item alert-warning">' + escHtml(tt('noTag')) + '</div>'; return; }
   if (d.id == null) {
-    out.innerHTML = '<div class="alert-item alert-normal"><strong>' + escHtml(d.device_code) + '</strong> - ' + escHtml(comp) + ' RUL ≈ <b>'
-      + (Math.floor(Math.random() * 30) + 30) + ' days</b>.' + aiDemoNote() + '</div>';
+    out.innerHTML = '<div class="alert-item alert-warning"><strong>' + escHtml(d.device_code) + '</strong> - ' + escHtml(comp)
+      + '：未连接后端（无设备ID），无法计算剩余寿命。' + aiDemoNote() + '</div>';
     return;
   }
   out.innerHTML = '<div class="ai-muted">' + escHtml(tt('loading')) + '</div>';
@@ -2501,7 +2595,10 @@ function runHealth() {
       + '<div style="margin-top:12px;font-size:12px;color:#999">' + escHtml(d.device_code) + '</div></div>'
       + (rows ? '<div style="max-width:420px;margin:0 auto">' + rows + '</div>' : '') + (demo ? aiDemoNote() : '');
   }
-  if (d.id == null) { show(Math.floor(Math.random() * 30) + 70, null, true); return; }
+  if (d.id == null) {
+    out.innerHTML = '<div class="alert-item alert-warning">未连接后端（无设备ID），无法计算健康度。' + aiDemoNote() + '</div>';
+    return;
+  }
   out.innerHTML = '<div class="ai-muted">' + escHtml(tt('loading')) + '</div>';
   aimsFetch('/ai/health/' + d.id).then(function(r) { if (AI_SEL === d) show(r.score, r.factors, false); })
     .catch(function(e) { if (AI_SEL === d) out.innerHTML = aiErr(e); });
@@ -3503,7 +3600,43 @@ function switchMaintTab(tab, btn) {
 function handleFaultPdf(input) {
   var file = input.files[0];
   if (!file) return;
-  document.getElementById('pdfAnalysis').innerHTML = '<div class="alert-item alert-normal">PDF "'+file.name+'" analyzed. Detected: 3 fault patterns.</div>';
+  var box = document.getElementById('pdfAnalysis');
+  box.innerHTML = '<div class="ai-muted">正在解析 PDF…（' + escHtml(file.name) + '）</div>';
+  aimsUpload('/maintenance/fault-pdf/analyze', file).then(function(r) {
+    var html = '';
+    html += '<div class="alert-item alert-normal"><strong>' + escHtml(r.filename) + '</strong> — 共 ' + r.pages + ' 页，提取文本 ' + r.chars + ' 字符'
+      + (r.tags && r.tags.length ? ' · 位号: ' + r.tags.map(escHtml).join(', ') : '') + '</div>';
+    if (r.patterns && r.patterns.length) {
+      html += '<div class="table-wrap" style="margin-top:12px"><table><thead><tr><th>命中行</th><th>关键词</th><th>报警码</th><th>测量值</th></tr></thead><tbody>'
+        + r.patterns.map(function(p) {
+            return '<tr><td style="max-width:380px;word-break:break-all">' + escHtml(p.line) + '</td>'
+              + '<td>' + (p.keywords || []).map(function(k){return '<span class="tag tw">' + escHtml(k) + '</span>';}).join(' ') + '</td>'
+              + '<td>' + escHtml((p.codes || []).join(', ') || '-') + '</td>'
+              + '<td>' + escHtml((p.values || []).join(', ') || '-') + '</td></tr>';
+          }).join('') + '</tbody></table></div>';
+    } else {
+      html += '<div class="alert-item alert-warning" style="margin-top:12px">未在文本中匹配到故障关键词（文本已提取，但可能不是故障报告）</div>';
+    }
+    if (r.diagnosis_suggestions && r.diagnosis_suggestions.length) {
+      html += '<h4 style="margin:16px 0 8px">候选诊断（规则包建议，仅供参考）</h4>';
+      html += r.diagnosis_suggestions.map(function(d) {
+        var rule = d.rule || {};
+        var txt = rule.diagnosis || rule.summary || rule.advice || JSON.stringify(rule).slice(0, 300);
+        return '<div class="alert-item alert-normal"><strong>' + escHtml(d.trigger) + '</strong>: ' + escHtml(txt) + '</div>';
+      }).join('');
+    }
+    if (r.warnings && r.warnings.length) {
+      html += '<div style="font-size:12px;color:#c07a00;margin-top:8px">' + r.warnings.map(escHtml).join('<br>') + '</div>';
+    }
+    html += '<div style="font-size:12px;color:#999;margin-top:10px">' + escHtml(r.note || '') + '</div>';
+    if (r.text_excerpt) {
+      html += '<details style="margin-top:10px"><summary style="cursor:pointer;font-size:12px;color:#666">查看提取的文本（前 4000 字符）</summary>'
+        + '<pre style="white-space:pre-wrap;font-size:12px;background:#fafafa;padding:10px;border-radius:6px;max-height:320px;overflow:auto">' + escHtml(r.text_excerpt) + '</pre></details>';
+    }
+    box.innerHTML = html;
+  }).catch(function(e) {
+    box.innerHTML = '<div class="alert-item alert-critical">解析失败：' + escHtml(e.message || e) + '</div>';
+  });
 }
 
 // Pull real work orders (e.g. just imported, or auto-created by an alarm)
@@ -3781,6 +3914,9 @@ function switchSysTab(tab, btn) {
   document.querySelectorAll('#page-sys .tc').forEach(function(c){c.classList.remove('active')});
   btn.classList.add('active');
   document.getElementById('sys-'+tab).classList.add('active');
+  if (tab === 'users') loadSysUsers();
+  if (tab === 'audit') loadSysAudit();
+  if (tab === 'components') loadSysComponents();
 }
 
 var _loginLockTimer = null;
@@ -3851,6 +3987,9 @@ function doLogin() {
       result.textContent = 'Login successful. User: ' + me.username + (me.is_superuser ? ' · Administrator' : '');
       aimsRenderSession();
       aimsLoginBusy(false);
+      // 登录后立刻拉一次真实数据：此前未登录时按设计不发受保护请求，
+      // 页面停留在演示数据，登录成功应当自动换成数据库里的真实内容。
+      if (typeof refreshData === 'function') refreshData();
     });
   }).catch(function(loginErr) {
     // There is deliberately no local/offline "demo login": a session exists only if the server issued one.
@@ -4381,17 +4520,20 @@ function tplSwitchTab(tab, btn) {
 }
 
 function tplLoadCategories() {
+  var box = document.getElementById('tplCategories');
   aimsFetch('/templates/categories').then(function(d){
     tplState.categories = d.categories || [];
-    var box = document.getElementById('tplCategories');
     var html = '<div style="border:1px solid #eee;border-radius:8px;overflow:hidden">';
     html += '<div class="tpl-cat tpl-cat-active" data-cat="" onclick="tplPickCategory(\'\')">全部模板</div>';
     tplState.categories.forEach(function(c){
       html += '<div class="tpl-cat" data-cat="' + c + '" onclick="tplPickCategory(\'' + c + '\')">' + c + '</div>';
     });
     html += '</div>';
-    box.innerHTML = html;
-  }).catch(function(e){ box.innerHTML = '<div style="color:#f5222d;font-size:12px">加载分类失败：' + e.message + '</div>'; });
+    if (box) box.innerHTML = html;
+  }).catch(function(e){
+    // 401 由 aimsFetch 统一弹重新登录提示；这里只渲染分类栏自身的错误
+    if (box && e.httpStatus !== 401) box.innerHTML = '<div style="color:#f5222d;font-size:12px">加载分类失败：' + tplEsc(e.message) + '</div>';
+  });
 }
 
 function tplPickCategory(cat) {
@@ -4432,7 +4574,15 @@ function tplLoad() {
         '</div>';
     }).join('');
   }).catch(function(e){
-    box.innerHTML = '<div style="color:#f5222d;padding:16px">加载失败：' + e.message + '</div>';
+    if (e && e.httpStatus === 401) {
+      // 登录失效/未登录：给出明确的重新认证入口，而不是一句英文报错
+      box.innerHTML = '<div style="padding:16px;color:#a8071a;background:#fff2f0;border:1px solid #ffa39e;border-radius:8px">' +
+        '<b>登录已失效，无法加载模板。</b><br><span style="font-size:12px">请重新登录后重试（登录不会影响已保存的模板与数据）。</span><br>' +
+        '<button class="btn btn-primary" style="margin-top:8px" onclick="aimsGoToLogin()">去登录</button> ' +
+        '<button class="btn btn-gray" style="margin-top:8px" onclick="tplLoad()">重试</button></div>';
+      return;
+    }
+    box.innerHTML = '<div style="color:#f5222d;padding:16px">加载失败：' + tplEsc(e && e.message) + '</div>';
   });
 }
 
@@ -4526,7 +4676,10 @@ function tplBlobDownload(method, path, body, fallbackName) {
   if (body) { opts.body = JSON.stringify(body); opts.headers = { 'Content-Type': 'application/json' }; }
   if (token) opts.headers = Object.assign(opts.headers || {}, { 'Authorization': 'Bearer ' + token });
   fetch(apiBase() + path, opts).then(function(r){
-    if (!r.ok) throw new Error('HTTP ' + r.status);
+    if (!r.ok) {
+      if (r.status === 401) { aimsSessionExpired(AIMS_SESSION_EXPIRED_MSG); throw new Error(AIMS_SESSION_EXPIRED_MSG); }
+      throw new Error('HTTP ' + r.status);
+    }
     var cd = r.headers.get('Content-Disposition') || '';
     var m = cd.match(/filename="?([^";]+)"?/);
     var name = m ? m[1] : fallbackName;
@@ -4695,6 +4848,138 @@ function tplLoadLogs() {
         '<td style="color:#999;max-width:320px;word-break:break-all">' + tplEsc(r.reason || '') + '</td></tr>';
       }).join('') + '</table>';
   }).catch(function(e){ document.getElementById('tplLogList').innerHTML = '<div style="color:#f5222d">加载失败：' + e.message + '</div>'; });
+}
+
+// ===== Alarms (报警中心, 阶段 7) =====
+var ALARM_CACHE = [];
+function switchAlarmTab(tab, btn) {
+  document.querySelectorAll('#page-alarm .tab-btn').forEach(function(b){b.classList.remove('active')});
+  document.querySelectorAll('#page-alarm .tc').forEach(function(c){c.classList.remove('active')});
+  btn.classList.add('active');
+  document.getElementById('alarm-'+tab).classList.add('active');
+}
+function alarmSevClass(sev) {
+  return sev === 'critical' ? 'tr' : sev === 'warning' ? 'tw' : 'tg';
+}
+function loadAlarms() {
+  var tbody = document.getElementById('alarmBody');
+  if (!tbody) return;
+  var st = document.getElementById('alarmStatusFilter');
+  var sv = document.getElementById('alarmSeverityFilter');
+  var qs = '?limit=200';
+  if (st && st.value) qs += '&status=' + encodeURIComponent(st.value);
+  if (sv && sv.value) qs += '&severity=' + encodeURIComponent(sv.value);
+  tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;color:#999">Loading...</td></tr>';
+  aimsFetch('/alarms' + qs).then(function(rows) {
+    ALARM_CACHE = Array.isArray(rows) ? rows : [];
+    if (!ALARM_CACHE.length) {
+      tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;color:#999">暂无报警（阈值内运行正常）</td></tr>';
+    } else {
+      tbody.innerHTML = ALARM_CACHE.map(function(a) {
+        var canAck = a.status === 'active';
+        var canResolve = a.status !== 'resolved';
+        return '<tr>'
+          + '<td>#' + a.id + '</td>'
+          + '<td>' + escHtml((a.triggered_at || '').replace('T', ' ').slice(0, 19)) + '</td>'
+          + '<td>' + aiDevLink(a.device_id) + '</td>'
+          + '<td>' + escHtml(a.component_name || '-') + '</td>'
+          + '<td>' + escHtml(a.alarm_type || '-') + '</td>'
+          + '<td><span class="tag ' + alarmSevClass(a.severity) + '">' + escHtml(a.severity) + '</span></td>'
+          + '<td>' + escHtml(a.status) + '</td>'
+          + '<td style="max-width:320px;word-break:break-all">' + escHtml(a.message || '') + '</td>'
+          + '<td>' + (canAck ? '<button class="btn btn-gray" style="padding:2px 8px" onclick="alarmAck(' + a.id + ')">确认</button> ' : '')
+          + (canResolve ? '<button class="btn btn-success" style="padding:2px 8px" onclick="alarmResolve(' + a.id + ')">解决</button>' : '-')
+          + '</td></tr>';
+      }).join('');
+    }
+    var sum = document.getElementById('alarmSummary');
+    if (sum) {
+      var act = ALARM_CACHE.filter(function(a){return a.status === 'active'}).length;
+      var crit = ALARM_CACHE.filter(function(a){return a.severity === 'critical' && a.status !== 'resolved'}).length;
+      sum.textContent = '共 ' + ALARM_CACHE.length + ' 条 · 未确认 ' + act + ' · 严重未解决 ' + crit;
+    }
+  }).catch(function(e) {
+    tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;color:#f5222d">加载失败：' + escHtml(e.message || e) + '</td></tr>';
+  });
+}
+function alarmAck(id) {
+  aimsFetch('/alarms/' + id + '/acknowledge', {method: 'POST'}).then(loadAlarms).catch(function(e){ alert('确认失败：' + (e.message || e)); });
+}
+function alarmResolve(id) {
+  if (!confirm('确认该报警已解决？')) return;
+  aimsFetch('/alarms/' + id + '/resolve', {method: 'POST'}).then(loadAlarms).catch(function(e){ alert('操作失败：' + (e.message || e)); });
+}
+function loadAlarmRules() {
+  var tbody = document.getElementById('alarmRuleBody');
+  if (!tbody) return;
+  aimsFetch('/alarms/rules').then(function(rows) {
+    if (!Array.isArray(rows) || !rows.length) {
+      tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:#999">暂无规则</td></tr>';
+      return;
+    }
+    tbody.innerHTML = rows.map(function(r) {
+      var lowHigh = (r.low_limit != null ? '低 ' + r.low_limit : '') + (r.high_limit != null ? ' 高 ' + r.high_limit : '');
+      return '<tr><td>' + r.id + '</td><td>' + escHtml(r.rule_type || '-')
+        + (r.component_name ? ' · ' + escHtml(r.component_name) : '') + '</td>'
+        + '<td>' + escHtml(r.rule_type || '-') + '</td>'
+        + '<td>' + escHtml(lowHigh.trim() || '-') + '</td>'
+        + '<td><span class="tag ' + alarmSevClass(r.severity) + '">' + escHtml(r.severity || '-') + '</span></td>'
+        + '<td>' + (r.is_enabled === false ? '否' : '是') + '</td></tr>';
+    }).join('');
+  }).catch(function(e) {
+    tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:#f5222d">加载失败：' + escHtml(e.message || e) + '</td></tr>';
+  });
+}
+
+// ===== System: users / audit / components (阶段 7) =====
+function loadSysUsers() {
+  var tbody = document.getElementById('sysUserBody');
+  if (!tbody) return;
+  aimsFetch('/system/users?limit=200').then(function(rows) {
+    if (!Array.isArray(rows) || !rows.length) { tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:#999">无用户</td></tr>'; return; }
+    tbody.innerHTML = rows.map(function(u) {
+      return '<tr><td>' + u.id + '</td><td>' + escHtml(u.username) + '</td><td>' + escHtml(u.email || '-') + '</td>'
+        + '<td>' + (u.is_active ? '<span class="tag tg">启用</span>' : '<span class="tag to">停用</span>') + '</td>'
+        + '<td>' + (u.is_superuser ? '是' : '否') + '</td>'
+        + '<td>' + (u.is_active ? '<button class="btn btn-gray" style="padding:2px 8px" onclick="sysToggleUser(' + u.id + ',false)">停用</button>' : '<button class="btn btn-gray" style="padding:2px 8px" onclick="sysToggleUser(' + u.id + ',true)">启用</button>') + '</td></tr>';
+    }).join('');
+  }).catch(function(e) { tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:#f5222d">加载失败：' + escHtml(e.message || e) + '</td></tr>'; });
+}
+function sysToggleUser(id, active) {
+  if (!confirm(active ? '启用该用户？' : '停用该用户？停用后无法登录。')) return;
+  aimsFetch('/system/users/' + id, {method: 'PATCH', body: JSON.stringify({is_active: active})})
+    .then(loadSysUsers).catch(function(e){ alert('操作失败：' + (e.message || e)); });
+}
+function loadSysAudit() {
+  var tbody = document.getElementById('sysAuditBody');
+  if (!tbody) return;
+  aimsFetch('/system/audit-logs?limit=100').then(function(r) {
+    var rows = Array.isArray(r) ? r : (r.items || []);
+    if (!rows.length) { tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;color:#999">暂无审计记录</td></tr>'; return; }
+    tbody.innerHTML = rows.map(function(a) {
+      return '<tr><td>' + escHtml((a.created_at || '').replace('T', ' ').slice(0, 19)) + '</td><td>' + escHtml(a.username || a.user_id || '-')
+        + '</td><td>' + escHtml(a.action || '-') + '</td><td>' + escHtml(a.entity || '-') + '</td>'
+        + '<td style="max-width:360px;word-break:break-all">' + escHtml(a.detail ? JSON.stringify(a.detail) : '-') + '</td></tr>';
+    }).join('');
+  }).catch(function(e) { tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;color:#f5222d">加载失败：' + escHtml(e.message || e) + '</td></tr>'; });
+}
+function loadSysComponents() {
+  var box = document.getElementById('sysCompBox');
+  if (!box) return;
+  box.innerHTML = '<div class="ai-muted">加载中…</div>';
+  aimsFetch('/system/components').then(function(d) {
+    var rows = (d.components || []).map(function(c) {
+      var st = c.status === 'running' || c.status === 'enabled' || c.status === 'installed';
+      return '<tr><td>' + escHtml(c.name) + '</td><td>' + escHtml(c.version || '-') + '</td><td>' + escHtml(c.category || '-')
+        + '</td><td><span class="tag ' + (st ? 'tg' : 'tw') + '">' + escHtml(c.status || '-') + '</span></td>'
+        + '<td>' + escHtml(c.license || '-') + '</td><td style="max-width:280px;word-break:break-all;font-size:12px;color:#888">' + escHtml(c.path || '-') + '</td></tr>';
+    }).join('');
+    var usage = d.disk_usage || {};
+    var usageTxt = Object.keys(usage).map(function(k){ return k + ': ' + (usage[k] == null ? '不可用' : usage[k] + ' MB'); }).join(' · ');
+    box.innerHTML = '<div style="font-size:12px;color:#666;margin-bottom:8px">应用 ' + escHtml(d.app_version) + ' · Python ' + escHtml(d.python_version) + ' · ' + escHtml(d.platform) + '</div>'
+      + '<div class="table-wrap"><table><thead><tr><th>组件</th><th>版本</th><th>类别</th><th>状态</th><th>许可证</th><th>路径</th></tr></thead><tbody>' + rows + '</tbody></table></div>'
+      + (usageTxt ? '<div style="font-size:12px;color:#666;margin-top:8px">目录占用 — ' + escHtml(usageTxt) + '</div>' : '');
+  }).catch(function(e) { box.innerHTML = '<div style="color:#f5222d">加载失败：' + escHtml(e.message || e) + '</div>'; });
 }
 
 // ===== Initialize =====

@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     AIMS 构建脚本公共层（被 build_x64.ps1 / build_arm64.ps1 / package_release.ps1 引用）。
 
@@ -89,7 +89,13 @@ function Read-VendorLock {
 }
 
 function Assert-FileHash {
-    <# 校验下载文件；第一次构建时用 -Update 记录，之后只允许一致 #>
+    <#
+      校验下载文件；第一次构建时用 -Update 记录，之后只允许一致。
+
+      这里刻意"没有基线就报错"而不是自动记录：自动记录等于第一次下载什么就
+      信任什么，中间人换了文件也照样通过，供应链校验就成了摆设。想要建立
+      基线必须显式 -UpdateLock，并把 build\vendor.lock.json 一起提交入库。
+    #>
     param(
         [Parameter(Mandatory = $true)][string]$Path,
         [Parameter(Mandatory = $true)][string]$Key,
@@ -99,13 +105,19 @@ function Assert-FileHash {
     $lock = Read-VendorLock
     $expected = $null
     if ($lock -and $lock.PSObject.Properties.Name -contains $Key) { $expected = $lock.$Key }
-    if ($Update -or -not $expected) {
-        Write-Host "  记录 $Key = $actual" -ForegroundColor DarkGray
+
+    if ($Update) {
+        Write-Host "  记录 $Key = $actual（请把 build\vendor.lock.json 提交入库）" -ForegroundColor Yellow
         $obj = @{}
         if ($lock) { foreach ($p in $lock.PSObject.Properties) { $obj[$p.Name] = $p.Value } }
         $obj[$Key] = $actual
         ($obj | ConvertTo-Json -Depth 4) | Set-Content -LiteralPath $script:LockFile -Encoding UTF8
         return $actual
+    }
+    if (-not $expected) {
+        throw ("缺少校验基线：build\vendor.lock.json 里没有 '$Key'。" +
+               "首次构建请显式执行 `.\build_x64.ps1 -UpdateLock`，确认下载来源可信后把生成的 " +
+               "build\vendor.lock.json 提交入库；之后所有构建都会强制比对哈希。")
     }
     if ($expected -ne $actual) {
         throw "校验失败：$Key 期望 $expected，实际 $actual。文件可能被替换或下载损坏，已中止构建。"

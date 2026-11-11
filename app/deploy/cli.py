@@ -185,6 +185,12 @@ def cmd_stop(args: argparse.Namespace) -> int:
         print(str(exc), file=sys.stderr)
         return EXIT_PG
     print("PostgreSQL 已停止")
+    # 依赖关系提示（总方案 8.4）：停止数据库会影响所有依赖它的组件
+    from app.deploy.dependencies import impact_of_stopping
+
+    impact = impact_of_stopping("postgresql")
+    if impact["direct"] or impact["chain"]:
+        print("提示：本次停止影响了以下组件 —— " + "、".join(impact["direct"] + impact["chain"]))
     return EXIT_OK
 
 
@@ -314,7 +320,8 @@ def cmd_uninstall(args: argparse.Namespace) -> int:
             import subprocess
 
             subprocess.run(["schtasks", "/Delete", "/TN", "AIMS Backup", "/F"],
-                           capture_output=True, text=True, timeout=60)
+                           capture_output=True, text=True, timeout=60,
+                           creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
         except Exception:  # noqa: BLE001
             pass
     print("卸载完成。程序目录本身由 Windows 的“应用和功能”或安装包卸载程序删除。")

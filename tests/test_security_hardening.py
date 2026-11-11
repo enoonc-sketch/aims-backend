@@ -89,7 +89,10 @@ def test_strong_secret_accepted():
 
 # ------------------------------------------------------------------ dev admin switch
 def test_dev_admin_allowed_only_outside_production():
-    assert _mk(SECRET_KEY=GOOD_KEY).dev_admin_allowed is True
+    # AIMS 1.0 phase 1 (report item H-2): unset ALLOW_DEV_ADMIN now means OFF
+    # even outside production — the convenience account must be opted into.
+    assert _mk(SECRET_KEY=GOOD_KEY).dev_admin_allowed is False
+    assert _mk(SECRET_KEY=GOOD_KEY, ALLOW_DEV_ADMIN=True).dev_admin_allowed is True
     assert _mk(SECRET_KEY=GOOD_KEY, ALLOW_DEV_ADMIN=False).dev_admin_allowed is False
     assert _mk(SECRET_KEY=GOOD_KEY, **_PROD).dev_admin_allowed is False
     with pytest.raises(ValidationError):
@@ -183,7 +186,9 @@ def test_no_sha256_fallback_and_legacy_hashes_rejected():
 
 def test_security_module_has_no_optional_import_fallbacks():
     src = open(security.__file__, encoding="utf-8").read()
-    assert "import bcrypt as _bcrypt" in src and "from jose import" in src
+    # 阶段 1（审计项 M-11）：python-jose → PyJWT，导入失败必须直接报错而非静默降级
+    assert "import bcrypt as _bcrypt" in src and "import jwt as pyjwt" in src
+    assert "from jose import" not in src
     assert "try:\n    import bcrypt" not in src and "_jose()" not in src
     assert 'startswith("demo.")' not in src and '"demo." +' not in src
 

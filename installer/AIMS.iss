@@ -24,7 +24,7 @@
 #define MyAppShortName "AIMS"
 #define MyAppPublisher "AIMS"
 #ifndef AppVersion
-  #define AppVersion "0.6.0"
+  #define AppVersion "1.0.0"
 #endif
 #ifndef BuildArch
   #define BuildArch "x64"
@@ -112,6 +112,8 @@ Source: "..\cores\models\*.gguf"; DestDir: "{app}\cores\models"; Flags: ignoreve
 Source: "..\vendor\pgsql\*"; DestDir: "{app}\pgsql"; Flags: ignoreversion recursesubdirs createallsubdirs skipifsourcedoesntexist
 ; ---- 运维脚本与文档 ----
 Source: "..\tools\*.ps1"; DestDir: "{app}\tools"; Flags: ignoreversion
+; 无窗口包装器（VBS）：快捷方式经它启动 PowerShell，避免控制台闪窗
+Source: "..\tools\*.vbs"; DestDir: "{app}\tools"; Flags: ignoreversion
 Source: "..\docs\*"; DestDir: "{app}\docs"; Flags: ignoreversion recursesubdirs createallsubdirs skipifsourcedoesntexist
 Source: "..\LICENSES.txt"; DestDir: "{app}\docs"; Flags: ignoreversion skipifsourcedoesntexist
 Source: "..\assets\aims.ico"; DestDir: "{app}\assets"; Flags: ignoreversion
@@ -120,9 +122,13 @@ Source: "..\installer\LICENSE.rtf"; DestDir: "{tmp}"; Flags: dontcopy deleteafte
 
 [Icons]
 Name: "{group}\AIMS"; Filename: "{app}\{#LauncherExe}"; WorkingDir: "{app}"; IconFilename: "{app}\assets\aims.ico"; Comment: "启动 AIMS 设备智能运维系统"
+; 调试模式（总方案：保留开发调试入口）——后端会分配一个可见控制台用于排障；
+; 正式用户走上面的 AIMS / 桌面快捷方式，全程无 CMD 窗口。
+Name: "{group}\AIMS 调试模式（控制台）"; Filename: "{app}\{#LauncherExe}"; Parameters: "--debug-console"; WorkingDir: "{app}"; IconFilename: "{app}\assets\aims.ico"
 Name: "{group}\AIMS 诊断报告"; Filename: "{app}\{#LauncherExe}"; Parameters: "--diagnose"; WorkingDir: "{app}"; IconFilename: "{app}\assets\aims.ico"
 Name: "{group}\AIMS 数据目录"; Filename: "{commonappdata}\AIMS"
-Name: "{group}\AIMS 备份与恢复"; Filename: "{app}\tools\Backup-Aims.ps1"; WorkingDir: "{app}\tools"
+; 备份脚本经由隐藏窗口的 PowerShell 执行（直接指向 .ps1 会弹蓝色控制台窗口）
+Name: "{group}\AIMS 备份与恢复"; Filename: "{sys}\wscript.exe"; Parameters: """{app}\tools\run-hidden.vbs"" backup.ps1 -Notify"; WorkingDir: "{app}\tools"; IconFilename: "{app}\assets\aims.ico"; Comment: "立即备份数据库与配置到数据目录 Backup\"
 Name: "{group}\卸载 AIMS"; Filename: "{uninstallexe}"
 Name: "{autodesktop}\AIMS"; Filename: "{app}\{#LauncherExe}"; WorkingDir: "{app}"; IconFilename: "{app}\assets\aims.ico"; Tasks: desktopicon
 Name: "{userappdata}\Microsoft\Internet Explorer\Quick Launch\AIMS"; Filename: "{app}\{#LauncherExe}"; WorkingDir: "{app}"; Tasks: quicklaunchicon
@@ -184,6 +190,93 @@ end;
 function Quote(const S: String): String;
 begin
   Result := '"' + S + '"';
+end;
+
+{ 版本号比较（总方案 12.1 降级防护）。返回 <0 / 0 / >0：
+  A<B、A=B、A>B。按 '.' 分段逐段数值比较，段数不足按 0 处理。 }
+function CompareVersionStrings(const A, B: String): Integer;
+var
+  I, NA, NB, VA, VB: Integer;
+
+  function Seg(const V: String; const Idx: Integer): String;
+  var
+    Tmp: String;
+    K, SegCount: Integer;
+  begin
+    Tmp := V;
+    SegCount := 0;
+    Result := '0';
+    while Tmp <> '' do
+    begin
+      if Pos('.', Tmp) > 0 then
+      begin
+        if SegCount = Idx then
+        begin
+          Result := Copy(Tmp, 1, Pos('.', Tmp) - 1);
+          exit;
+        end;
+        Tmp := Copy(Tmp, Pos('.', Tmp) + 1, MaxInt);
+      end
+      else
+      begin
+        if SegCount = Idx then
+          Result := Tmp;
+        Tmp := '';
+      end;
+      SegCount := SegCount + 1;
+    end;
+    if SegCount <= Idx then
+      Result := '0';
+  end;
+
+  function ToInt(const S: String): Integer;
+  var
+    Clean: String;
+    K: Integer;
+  begin
+    Clean := '';
+    for K := 1 to Length(S) do
+      if (S[K] >= '0') and (S[K] <= '9') then
+        Clean := Clean + S[K];
+    if Clean = '' then
+      Result := 0
+    else
+      Result := StrToInt(Clean);
+  end;
+
+begin
+  { 段数 = '.' 个数 + 1（至少 1 段；最多按 8 段防异常输入死循环） }
+  NA := 1;
+  for I := 1 to Length(A) do
+    if A[I] = '.' then
+      NA := NA + 1;
+  if NA > 8 then
+    NA := 8;
+  NB := 1;
+  for I := 1 to Length(B) do
+    if B[I] = '.' then
+      NB := NB + 1;
+  if NB > 8 then
+    NB := 8;
+  if NA > NB then
+    I := NA
+  else
+    I := NB;
+  Result := 0;
+  NA := I;
+  for I := 0 to NA - 1 do
+  begin
+    VA := ToInt(Seg(A, I));
+    VB := ToInt(Seg(B, I));
+    if VA <> VB then
+    begin
+      if VA > VB then
+        Result := 1
+      else
+        Result := -1;
+      exit;
+    end;
+  end;
 end;
 
 { 执行一个外部程序，把输出写进安装日志。返回退出码。 }
@@ -264,6 +357,23 @@ begin
     begin
       UpgradeMode := True;
       Log('检测到当前用户安装的旧版本 ' + OldVersion);
+    end;
+  end;
+  // 降级防护（总方案 12.1）：新版本号必须 >= 已安装版本，防止旧安装包覆盖新数据目录
+  if UpgradeMode and (OldVersion <> '{#AppVersion}') then
+  begin
+    if CompareVersionStrings(OldVersion, '{#AppVersion}') > 0 then
+    begin
+      if MsgBox(
+          Format('本机已安装 AIMS %s，比本次安装包版本 %s 更新。' + #13#10 +
+                 '用旧版安装包覆盖会回退程序文件并可能引发数据库结构不兼容。' + #13#10#13#10 +
+                 '确实要用旧版覆盖吗？（普通用户请选"否"并获取新版安装包）',
+                 [OldVersion, '{#AppVersion}']),
+          mbConfirmation, MB_YESNO) = IDNO then
+      begin
+        Result := False;  // 用户选择中止：InitializeSetup 返回 False 即取消安装
+        exit;
+      end;
     end;
   end;
 end;

@@ -29,7 +29,7 @@ from app.schemas.external import (
     ExternalSyncLogOut,
     ExternalSyncResult,
 )
-from app.services import data_health, external_scheduler
+from app.services import data_health, external_scheduler, ssrf_guard
 from app.services.crypto_util import encrypt_secret
 from app.services.external_scraper import ScraperError, external_session
 from app.services.external_sync_service import run_sync_for_database
@@ -46,6 +46,12 @@ def list_sources(db: Session = Depends(get_db), skip: int = SkipQuery, limit: in
 
 @router.post("/sources", response_model=ExternalSourceOut, status_code=201)
 def create_source(payload: ExternalSourceCreate, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    # SSRF 防护（审计项 M-3）：抓取源 URL 必须是公网 http/https 地址
+    try:
+        ssrf_guard.validate_public_url(payload.base_url, field="base_url")
+        ssrf_guard.validate_public_url(payload.login_url, field="login_url")
+    except ssrf_guard.SSRFError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from None
     data = payload.model_dump(exclude={"password"})
     row = ExternalSource(**data, password_encrypted=encrypt_secret(payload.password))
     db.add(row)
@@ -73,6 +79,14 @@ def update_source(
     if row is None:
         raise HTTPException(status_code=404, detail="Source not found")
     data = payload.model_dump(exclude_unset=True, exclude={"password"})
+    # SSRF 防护（审计项 M-3）：更新时同样校验新 URL
+    try:
+        if "base_url" in data:
+            ssrf_guard.validate_public_url(data["base_url"], field="base_url")
+        if "login_url" in data:
+            ssrf_guard.validate_public_url(data["login_url"], field="login_url")
+    except ssrf_guard.SSRFError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from None
     for field, value in data.items():
         setattr(row, field, value)
     if payload.password:
@@ -140,6 +154,11 @@ def create_database(
 ):
     if db.get(ExternalSource, payload.source_id) is None:
         raise HTTPException(status_code=404, detail="Source not found")
+    # SSRF 防护（审计项 M-3）：数据库列表页 URL 同样必须公网可达
+    try:
+        ssrf_guard.validate_public_url(payload.list_url, field="list_url")
+    except ssrf_guard.SSRFError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from None
     row = ExternalDatabase(**payload.model_dump())
     db.add(row)
     db.commit()
@@ -166,7 +185,13 @@ def update_database(
     row = db.get(ExternalDatabase, database_id)
     if row is None:
         raise HTTPException(status_code=404, detail="Database not found")
-    for field, value in payload.model_dump(exclude_unset=True).items():
+    data = payload.model_dump(exclude_unset=True)
+    try:
+        if "list_url" in data:
+            ssrf_guard.validate_public_url(data["list_url"], field="list_url")
+    except ssrf_guard.SSRFError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from None
+    for field, value in data.items():
         setattr(row, field, value)
     db.commit()
     db.refresh(row)

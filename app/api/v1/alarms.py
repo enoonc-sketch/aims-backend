@@ -50,12 +50,18 @@ def create_alarm(payload: AlarmCreate, db: Session = Depends(get_db), user: User
 
 
 @router.post("/{alarm_id}/acknowledge", response_model=AlarmOut)
-def acknowledge_alarm(alarm_id: int, payload: AlarmAck, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+def acknowledge_alarm(
+    alarm_id: int,
+    payload: AlarmAck | None = None,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """确认报警。确认人取当前登录用户（不接受客户端自报 user_id，防止伪造审计记录）。"""
     alarm = db.get(Alarm, alarm_id)
     if not alarm:
         raise HTTPException(status_code=404, detail="Alarm not found")
     alarm.status = "acknowledged"
-    alarm.acknowledged_by = payload.user_id
+    alarm.acknowledged_by = user.id
     alarm.acknowledged_at = datetime.now(timezone.utc)
     db.commit()
     db.refresh(alarm)

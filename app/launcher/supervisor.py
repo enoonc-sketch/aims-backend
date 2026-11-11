@@ -179,6 +179,16 @@ class Supervisor:
         if probe.get("backend"):
             svc.state = "running"
             self.progress(f"  AI 引擎  : {probe.get('backend')}（模型 {len(models)} 个）")
+            # 启动时对 embedding 模型做一次真实推理预热（总方案 10.3）：
+            # DLL 缺失 / CPU 指令集不支持 / 模型文件损坏只有真实加载才暴露，
+            # 不能等到用户第一次问答才发现。失败不阻断启动，如实降级。
+            try:
+                warm = ai_engine.warmup(self.layout, kind="embedding")
+                if not warm.get("ok"):
+                    svc.detail += "；预热未通过：" + str(warm.get("reason", ""))
+                    self.progress(f"  AI 引擎  : 模型预热未通过（{warm.get('reason')}），首次使用时可能再次失败")
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("ai warmup skipped: %s", exc)
         else:
             # 规则引擎仍然可用，这是"降级"不是"失败"，必须如实告诉用户。
             svc.state = "degraded"
@@ -339,8 +349,11 @@ class Supervisor:
         logger.warning("backend did not stop in %.0fs, killing tree", grace)
         if IS_WINDOWS:
             try:
+                # CREATE_NO_WINDOW：taskkill 是控制台程序，在 GUI 启动器里
+                # 直接跑会闪出黑色 cmd 窗口，必须显式压掉。
                 subprocess.run(["taskkill", "/PID", str(proc.pid), "/T", "/F"],
-                               capture_output=True, text=True, timeout=30)
+                               capture_output=True, text=True, timeout=30,
+                               creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
             except Exception:  # noqa: BLE001
                 proc.kill()
         else:

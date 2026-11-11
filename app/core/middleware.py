@@ -88,6 +88,17 @@ class SecurityHeadersMiddleware:
                 add(b"x-content-type-options", b"nosniff")
                 add(b"x-frame-options", b"DENY")
                 add(b"referrer-policy", b"no-referrer")
+                if not is_api:
+                    # CSP for the HTML UI (audit item L-6): the frontend is a
+                    # single self-contained file, so nothing may load from
+                    # remote origins. script/style keep 'unsafe-inline'
+                    # because the app is one inline document — the value
+                    # still blocks any remote script/font/frame injection.
+                    add(b"content-security-policy",
+                        b"default-src 'self'; script-src 'self' 'unsafe-inline'; "
+                        b"style-src 'self' 'unsafe-inline'; img-src 'self' data:; "
+                        b"font-src 'self'; connect-src 'self'; frame-ancestors 'none'; "
+                        b"form-action 'self'; base-uri 'self'")
                 if is_api:
                     add(b"cache-control", b"no-store")
                 if self.hsts:
@@ -281,3 +292,77 @@ def _user_id_from_bearer(scope) -> int | None:
                     except (KeyError, ValueError):
                         return None
     return None
+
+
+# --------------------------------------------------------------------------- #
+class RateLimitMiddleware:
+    """令牌桶限流（M-7，总方案 3.4/13.3）。
+
+    - 登录/刷新等认证端点用更严格的一档（防止在线暴力破解，配合已有的失败计数）；
+    - 其余 API 用较宽松的一档（单机桌面部署不需要 CDN 级限流，但必须能挡住
+      脚本化的枚举/爬取与 AI 端点的滥用）。
+    - 纯内存实现：单进程 uvicorn，无需 Redis；重启即清零（可接受）。
+    - 超限返回 429 + Retry-After，并附 X-RateLimit-* 头。
+    - 只对 API 前缀生效；/health、/ui、静态资源不限制。
+    """
+
+    def __init__(self, app, api_prefix: str = "/api/v1",
+                 auth_paths: Iterable[str] = (), global_limit: int = 600,
+                 auth_limit: int = 20, window_seconds: int = 60):
+        self.app = app
+        self.api_prefix = api_prefix.rstrip("/")
+        self.auth_paths = {f"{self.api_prefix}{p}" for p in auth_paths}
+        self.global_limit = global_limit
+        self.auth_limit = auth_limit
+        self.window = float(window_seconds)
+        self._hits: dict[tuple[str, str], list[float]] = {}
+        self._last_cleanup = time.monotonic()
+
+    def _bucket(self, ip: str, kind: str, limit: int, now: float) -> tuple[bool, int]:
+        key = (ip, kind)
+        stamps = [t for t in self._hits.get(key, []) if now - t < self.window]
+        if len(stamps) >= limit:
+            self._hits[key] = stamps
+            retry = max(1, int(self.window - (now - stamps[0])))
+            return False, retry
+        stamps.append(now)
+        self._hits[key] = stamps
+        return True, 0
+
+    def _cleanup(self, now: float) -> None:
+        # 周期性清理空桶，避免长期运行时内存缓慢增长
+        if now - self._last_cleanup < self.window * 2:
+            return
+        self._last_cleanup = now
+        for key in [k for k, v in self._hits.items() if not v or now - v[-1] > self.window]:
+            self._hits.pop(key, None)
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+        path = scope.get("path", "")
+        if not path.startswith(self.api_prefix):
+            await self.app(scope, receive, send)
+            return
+
+        now = time.monotonic()
+        self._cleanup(now)
+        ip = client_ip_from_scope(scope) or "unknown"
+        is_auth = path in self.auth_paths
+
+        ok, retry = self._bucket(ip, "auth" if is_auth else "api",
+                                 self.auth_limit if is_auth else self.global_limit, now)
+        if not ok:
+            start, body = _json_response_messages(
+                429,
+                "请求过于频繁，请稍后重试" if is_auth else "请求频率超出限制，请稍后重试",
+                extra_headers=[(b"retry-after", str(retry).encode()),
+                               (b"x-ratelimit-limit", str(self.auth_limit if is_auth else self.global_limit).encode()),
+                               (b"x-ratelimit-remaining", b"0")],
+            )
+            await send(start)
+            await send(body)
+            return
+
+        await self.app(scope, receive, send)

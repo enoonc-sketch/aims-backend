@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     在干净的 Windows 上跑完整验收：安装 → 启动 → 功能 → 备份/恢复 → 升级 → 卸载。
 
@@ -11,8 +11,8 @@
     所以只能在一台专用测试机上跑。
 
     用法（管理员 PowerShell）：
-        .\Windows-Acceptance.ps1 -Setup D:\AIMS-0.6.0-x64-Setup.exe
-        .\Windows-Acceptance.ps1 -Setup ... -UpgradeSetup D:\AIMS-0.6.0-x64-Setup.exe
+        .\Windows-Acceptance.ps1 -Setup D:\AIMS-1.0.0-x64-Setup.exe
+        .\Windows-Acceptance.ps1 -Setup ... -UpgradeSetup D:\AIMS-1.0.0-x64-Setup.exe
         .\Windows-Acceptance.ps1 -Setup ... -PurgeAfter      # 卸载后连数据一起删
 
 .PARAMETER Setup

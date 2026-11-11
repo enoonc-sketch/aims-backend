@@ -446,9 +446,9 @@ def list_core_packs_from_db(db) -> list[dict[str, Any]]:
         cid = entry.get("id")
         row = rows.get(cid)
         kind = _entry_kind(entry)
-        present = row is not None and (
-            row.storage != "disk" or (row.file_path and Path(row.file_path).is_file())
-        )
+        present = bool(row is not None and (
+            row.storage != "disk" or (bool(row.file_path) and Path(row.file_path).is_file())
+        ))
         out.append(
             {
                 "id": cid,
@@ -613,3 +613,152 @@ def list_ai_cores() -> list[dict[str, Any]]:
             "path": str(path) if path else None,
         })
     return found
+
+
+# ---------------------------------------------------------------------------
+# 模型生命周期：卸载 / 删除（AIMS 1.0 阶段 3-5 补齐，总方案第七部分 7.3）
+#
+# 卸载（unload）：释放 llama.cpp 在 RAM/VRAM 中的句柄，模型文件保留。
+# 删除（delete）：先卸载，再把模型文件从磁盘移除并把数据库行复位为"未下载"。
+#   - 仅 llm / embedding 二进制模型可删除（JSON 规则包与业务功能绑定，不可删）；
+#   - 激活中的默认模型禁止删除（须先切换到其它模型）；
+#   - 路径受控：只允许删除 models_dir 内的文件（防止 DB 记录被篡改后误删任意文件）。
+# ---------------------------------------------------------------------------
+
+class ModelDeleteError(Exception):
+    """模型删除被拒绝（携带面向用户的中文原因）。"""
+
+
+def unload_model(db, core_id: str) -> dict[str, Any]:
+    from app.services import llm_local, model_registry
+
+    entry = get_manifest_entry(core_id)
+    if entry is None:
+        raise ValueError(f"Unknown core id: {core_id}")
+    kind = _entry_kind(entry)
+    if kind not in ("llm", "embedding"):
+        raise ModelDeleteError("该模型不是本地推理模型（llm/embedding），无需卸载")
+    llm_local.unload(kind)
+    return {
+        "id": core_id,
+        "kind": kind,
+        "unloaded": True,
+        "active": model_registry.get_active(kind),
+        "status": llm_local.status(db),
+    }
+
+
+def delete_model(db, core_id: str) -> dict[str, Any]:
+    import shutil
+
+    from app.models.ai import AICorePack
+    from app.core.config import settings
+    from app.services import llm_local, model_registry
+
+    entry = get_manifest_entry(core_id)
+    if entry is None:
+        raise ValueError(f"Unknown core id: {core_id}")
+    kind = _entry_kind(entry)
+    if kind not in ("llm", "embedding"):
+        raise ModelDeleteError(
+            "内置规则包/知识包与业务功能绑定，不允许通过模型管理删除"
+        )
+    if model_registry.get_active(kind) == core_id:
+        raise ModelDeleteError(
+            f"该模型是当前激活的 {kind} 模型，请先切换到其它模型后再删除"
+        )
+
+    row = db.query(AICorePack).filter(AICorePack.core_id == core_id).one_or_none()
+    file_path: Optional[Path] = None
+    if row is not None and row.file_path:
+        file_path = Path(row.file_path)
+    elif entry.get("download_type") == "binary":
+        cand = settings.models_dir_path / entry["filename"]
+        if cand.is_file():
+            file_path = cand
+
+    deleted_bytes = 0
+    if file_path is not None and file_path.is_file():
+        # 路径受控：文件必须在 models_dir 内，且必须是模型文件后缀
+        models_root = settings.models_dir_path.resolve()
+        try:
+            inside = file_path.resolve().is_relative_to(models_root)
+        except AttributeError:  # Python <3.9 兜底
+            inside = str(file_path.resolve()).startswith(str(models_root))
+        if not inside:
+            raise ModelDeleteError(
+                f"模型文件不在模型目录内（{file_path}），拒绝删除以保护任意文件安全"
+            )
+        if file_path.suffix.lower() not in (".gguf", ".bin", ".onnx"):
+            raise ModelDeleteError(
+                f"非模型文件类型（{file_path.suffix}），拒绝删除"
+            )
+        deleted_bytes = file_path.stat().st_size
+        # 先释放推理句柄，再删文件
+        llm_local.unload(kind)
+        file_path.unlink()
+
+    if row is not None:
+        row.file_path = None
+        row.sha256 = None
+        row.size_bytes = None
+        row.storage = "db" if row.content_json is not None or row.content_text is not None else row.storage
+        db.commit()
+
+    return {
+        "id": core_id,
+        "kind": kind,
+        "deleted": True,
+        "freed_bytes": deleted_bytes,
+        "file_removed": bool(file_path and deleted_bytes),
+        "status": llm_local.status(db),
+    }
+
+
+def scan_local_models(db) -> dict[str, Any]:
+    """扫描模型目录中"存在但未登记"的 GGUF 模型并登记入库（总方案 7.2 模型导入）。
+
+    场景：用户离线拿到一个 GGUF 文件，手工放进模型目录（桌面部署的常规操作）。
+    扫描按 GGUF 魔数做基本校验、计算 SHA-256 并登记来源 source="local-import"，
+    使模型出现在 AI 中心列表里、可被激活/卸载/删除。已登记（在 manifest 或 DB 中
+    有对应 filename）的文件跳过。路径受控：只扫描 settings.models_dir_path。
+    """
+    import hashlib
+
+    from app.models.ai import AICorePack
+    from app.core.config import settings
+
+    root = settings.models_dir_path
+    known_files = {e.get("filename") for e in load_manifest()}
+    known_files |= {row.filename for row in db.query(AICorePack).all() if row.filename}
+
+    registered: list[dict[str, Any]] = []
+    skipped: list[str] = []
+    for f in sorted(root.rglob("*.gguf")):
+        rel = f.relative_to(root).as_posix()
+        if rel in known_files or f.name in known_files:
+            skipped.append(rel)
+            continue
+        with open(f, "rb") as fh:
+            magic = fh.read(4)
+        if magic != b"GGUF":
+            skipped.append(rel + " (非GGUF)")
+            continue
+        size = f.stat().st_size
+        h = hashlib.sha256()
+        with open(f, "rb") as fh:
+            for chunk in iter(lambda: fh.read(1024 * 1024), b""):
+                h.update(chunk)
+        core_id = f"local-{f.stem}"[:100]
+        row = db.query(AICorePack).filter(AICorePack.core_id == core_id).one_or_none()
+        if row is None:
+            row = AICorePack(core_id=core_id, name=f.stem, kind="ai", license=None,
+                             filename=rel, purpose="本地导入的模型文件",
+                             source_url="local-import", storage="disk",
+                             file_path=str(f), sha256=h.hexdigest(),
+                             size_bytes=size)
+            db.add(row)
+        db.commit()
+        registered.append({"id": core_id, "filename": rel, "size_bytes": size,
+                           "sha256": h.hexdigest()})
+    return {"scanned_dir": str(root), "registered": registered, "skipped": skipped}

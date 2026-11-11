@@ -169,3 +169,87 @@ def lab_sample_coverage(
         "covered_pct": round(covered / len(items) * 100, 1) if items else None,
         "items": items,
     }
+
+
+# ---------------------------------------------------------------------------
+# 通讯中断巡检（AIMS 1.0 阶段 1，审计项 F-6）
+#
+# 以前这段逻辑只存在于 POST /communication/scan-stale 端点里，全代码库没有任何
+# 调度者调用它——独立桌面部署时通讯中断永远不会被发现。现在逻辑下沉到服务层：
+# API 端点和 external_scheduler 里的定时任务调用同一个函数，行为完全一致。
+# ---------------------------------------------------------------------------
+def scan_stale_tags(db: Session, stale_minutes: int = 15):
+    """找出绑定了网关但很久没有新数据的 TAG（通讯中断），开「通讯中断」报警，
+    并把整个网关/设备置 offline。数据恢复（再次 ingest）时报警自动关闭。
+
+    从没上报过任何数据的 TAG 不算中断（更可能是配置问题），只在
+    never_reported_tags 计数。返回 StaleScanOut（与 API 响应模型一致）。
+    """
+    from app.models.device import Device, DeviceComponent, Gateway
+    from app.services import data_chain
+    from app.schemas.communication import StaleScanOut
+
+    now = datetime.now(timezone.utc)
+    threshold = timedelta(minutes=stale_minutes)
+
+    tags = db.scalars(select(DeviceComponent).where(DeviceComponent.gateway_id.is_not(None))).all()
+    device_ids = {t.device_id for t in tags}
+    last: dict[tuple, datetime] = {}
+    if device_ids:
+        for dev_id, comp, ts in db.execute(
+            select(Measurement.device_id, Measurement.component_name, func.max(Measurement.time))
+            .where(Measurement.device_id.in_(device_ids))
+            .group_by(Measurement.device_id, Measurement.component_name)
+        ).all():
+            last[(dev_id, comp)] = _aware(ts)
+
+    gateways = {g.id: g for g in db.scalars(select(Gateway)).all()}
+    devices = {d.id: d for d in db.scalars(select(Device).where(Device.id.in_(device_ids))).all()} if device_ids else {}
+
+    result = StaleScanOut(stale_minutes=stale_minutes, checked_tags=len(tags))
+    gw_state: dict[int, list[bool]] = {}
+    dev_state: dict[int, list[bool]] = {}
+    for tag in tags:
+        lt = last.get((tag.device_id, tag.component_name))
+        if lt is None:
+            result.never_reported_tags += 1
+            continue
+        age = now - lt
+        is_stale = age >= threshold
+        gw_state.setdefault(tag.gateway_id, []).append(is_stale)
+        dev_state.setdefault(tag.device_id, []).append(is_stale)
+        if not is_stale:
+            continue
+        device, gw = devices[tag.device_id], gateways.get(tag.gateway_id)
+        minutes = int(age.total_seconds() // 60)
+        entry = {
+            "device_code": device.device_code, "component_name": tag.component_name,
+            "gateway_code": gw.gateway_code if gw else None, "tag_address": tag.tag_address,
+            "last_data_at": lt.isoformat(), "silent_minutes": minutes,
+        }
+        if not data_chain.open_alarm_exists(db, device.id, component_name=tag.component_name, alarm_type="comm"):
+            alarm, _ = data_chain.raise_alarm(
+                db, device, tag.component_name, alarm_type="comm", severity="warning",
+                message=(
+                    f"{device.device_code} {tag.component_name} 数据中断 {minutes} 分钟"
+                    f"（网关 {gw.gateway_code if gw else '-'}，地址 {tag.tag_address or '-'}）"
+                ),
+                triggered_at=now,
+            )
+            entry["alarm_id"] = alarm.id
+            result.comm_alarms_created += 1
+        result.stale_tags.append(entry)
+
+    for gid, flags in gw_state.items():
+        gw = gateways.get(gid)
+        if gw is not None and flags and all(flags) and gw.status != "offline":
+            gw.status = "offline"
+            result.gateways_marked_offline.append(gw.gateway_code)
+    for did, flags in dev_state.items():
+        dev = devices.get(did)
+        if dev is not None and flags and all(flags) and dev.status == "online":
+            dev.status = "offline"
+            result.devices_marked_offline.append(dev.device_code)
+
+    db.commit()
+    return result
