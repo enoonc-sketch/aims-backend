@@ -11,7 +11,7 @@
     所以只能在一台专用测试机上跑。
 
     用法（管理员 PowerShell）：
-        .\Windows-Acceptance.ps1 -Setup D:\AIMS-0.5.10-x64-Setup.exe
+        .\Windows-Acceptance.ps1 -Setup D:\AIMS-0.6.0-x64-Setup.exe
         .\Windows-Acceptance.ps1 -Setup ... -UpgradeSetup D:\AIMS-0.6.0-x64-Setup.exe
         .\Windows-Acceptance.ps1 -Setup ... -PurgeAfter      # 卸载后连数据一起删
 

@@ -24,7 +24,7 @@
 #define MyAppShortName "AIMS"
 #define MyAppPublisher "AIMS"
 #ifndef AppVersion
-  #define AppVersion "0.5.10"
+  #define AppVersion "0.6.0"
 #endif
 #ifndef BuildArch
   #define BuildArch "x64"

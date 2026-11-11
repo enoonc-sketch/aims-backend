@@ -275,3 +275,55 @@ def create_shortcut(path: Path, target: Path, *, args: str = "", workdir: Path |
     except Exception as exc:  # noqa: BLE001
         logger.warning("shortcut failed: %s", exc)
         return False
+
+
+# --------------------------------------------------------------------------- #
+# AIMS Desktop 原生窗口（pywebview / Edge WebView2）
+# --------------------------------------------------------------------------- #
+def webview_available() -> bool:
+    """pywebview 是否可用（Windows 上经由 Edge WebView2 渲染）。
+
+    WebView2 Runtime 在 Windows 11 随系统自带；缺失时这里返回 False，
+    启动器自动回退到 Edge --app 窗口 / 系统浏览器，功能完全等价。
+    """
+    try:
+        import webview  # noqa: F401
+
+        return True
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def run_tray_detached(icon, items: Iterable) -> bool:
+    """在后台线程里跑托盘图标（供主线程跑 GUI 消息循环的窗口模式用）。
+
+    pystray 的 win32 后端支持 run_detached；失败返回 False，调用方回退到
+    "托盘在主线程" 的传统模式。
+    """
+    try:
+        import pystray
+
+        icon.menu = pystray.Menu(*items)
+        icon.run_detached()
+        return True
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("detached tray failed: %s", exc)
+        return False
+
+
+def run_desktop_window(url: str, *, title: str = "AIMS", width: int = 1280,
+                       height: int = 800) -> None:
+    """以原生桌面窗口打开主界面，阻塞到窗口被用户关闭。
+
+    与 run_standalone._open_ui_window 相同的注意点：不设 on_top=True
+    （pywebview 6.2.1 + EdgeChromium 在激活压力下会死锁，见 r0x0r/pywebview#1823）。
+    """
+    import webview
+
+    try:  # pywebview 5+：允许页面里的 <a download>（CSV/Excel 导出）弹出保存对话框
+        webview.settings["ALLOW_DOWNLOADS"] = True
+    except Exception:  # noqa: BLE001
+        pass
+    webview.create_window(title, url, width=width, height=height,
+                          resizable=True, text_select=True)
+    webview.start()

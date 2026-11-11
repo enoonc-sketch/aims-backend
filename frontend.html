@@ -25,6 +25,11 @@ body{font-family:'Microsoft YaHei UI','Segoe UI',sans-serif;height:100vh;overflo
 .content{flex:1;overflow-y:auto;padding:20px}
 .page{display:none}.page.active{display:block}
 .card-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:16px;margin-bottom:20px}
+/* Template Center 模板中心 */
+.tpl-cat{padding:9px 12px;font-size:13px;cursor:pointer;border-bottom:1px solid #f0f0f0;color:#555}
+.tpl-cat:hover{background:#f5f5f5}
+.tpl-cat-active{background:#e6f7ff;color:#1890ff;font-weight:bold}
+
 .stat-card{background:#fff;border-radius:8px;padding:20px;box-shadow:0 2px 8px rgba(0,0,0,.06)}
 .stat-card .label{font-size:13px;color:#888;margin-bottom:8px}
 .stat-card .value{font-size:28px;font-weight:bold;color:#333}
@@ -177,6 +182,7 @@ tr:hover{background:#f5f5f5}
 <button class="nav-btn" onclick="showPage('danal',this)">Data Analysis</button>
 <button class="nav-btn" onclick="showPage('ai',this)">AI Center</button>
 <button class="nav-btn" onclick="showPage('know',this)">Knowledge</button>
+<button class="nav-btn" onclick="showPage('tpl',this)">Templates</button>
 <button class="nav-btn" onclick="showPage('maint',this)">Maintenance</button>
 <button class="nav-btn" onclick="showPage('asset',this)">Assets</button>
 <button class="nav-btn" onclick="showPage('lab',this)">Lab</button>
@@ -640,6 +646,75 @@ tr:hover{background:#f5f5f5}
 </div>
 </div>
 </div>
+
+<div class="page" id="page-tpl">
+<div class="tabs">
+<button class="tab-btn active" onclick="tplSwitchTab('list',this)">模板列表</button>
+<button class="tab-btn" onclick="tplSwitchTab('import',this)">导入模板</button>
+<button class="tab-btn" onclick="tplSwitchTab('logs',this)">导入记录</button>
+</div>
+
+<div class="tc active" id="tpl-list">
+  <div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap;align-items:center">
+    <input type="text" id="tplSearch" placeholder="搜索模板名称/描述…" style="flex:1;min-width:180px;padding:9px;border:1px solid #d9d9d9;border-radius:6px" oninput="tplLoad()">
+    <button class="btn btn-primary" onclick="tplShowCreate()">＋ 新建模板</button>
+    <button class="btn btn-success" onclick="tplSwitchTab('import',document.querySelectorAll('#page-tpl .tab-btn')[1])">导入模板</button>
+    <button class="btn btn-gray" onclick="tplExportAllCustom()">导出全部自定义模板</button>
+    <select id="tplSourceFilter" style="padding:9px;border:1px solid #d9d9d9;border-radius:6px" onchange="tplLoad()">
+      <option value="">全部来源</option>
+      <option value="system">系统模板</option>
+      <option value="custom">我的模板</option>
+      <option value="imported">已导入模板</option>
+    </select>
+  </div>
+  <div style="display:flex;gap:16px">
+    <div id="tplCategories" style="width:170px;flex-shrink:0"></div>
+    <div style="flex:1">
+      <div id="tplCards" class="card-grid"></div>
+      <div id="tplDetail" style="display:none;margin-top:20px;padding:16px;background:#f9f9f9;border-radius:8px"></div>
+    </div>
+  </div>
+</div>
+
+<div class="tc" id="tpl-import">
+  <div class="upload-zone" onclick="document.getElementById('tplFileInput').click()" style="margin-bottom:16px">
+    <div style="font-size:48px;margin-bottom:12px">📦</div>
+    <div style="font-size:16px;color:#333;margin-bottom:8px">点击选择模板文件（可多选）</div>
+    <div style="font-size:12px;color:#999">支持 .aimstpl 模板包，以及内含多个 .aimstpl 的批量 ZIP。导入前自动预览与安全检查。</div>
+    <input type="file" id="tplFileInput" style="display:none" multiple accept=".aimstpl,.zip" onchange="tplImportPreview(this)">
+  </div>
+  <div id="tplPreview"></div>
+</div>
+
+<div class="tc" id="tpl-logs">
+  <button class="btn btn-gray" style="margin-bottom:12px" onclick="tplLoadLogs()">刷新</button>
+  <div id="tplLogList"></div>
+</div>
+
+<!-- 新建/编辑模板 -->
+<div id="tplEditor" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:1000;overflow:auto">
+  <div style="background:#fff;max-width:720px;margin:40px auto;padding:24px;border-radius:10px">
+    <h3 id="tplEditorTitle" style="margin-top:0">新建模板</h3>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+      <div class="form-group"><label>模板名称 *</label><input type="text" id="tplName" style="width:100%;padding:8px;border:1px solid #d9d9d9;border-radius:6px"></div>
+      <div class="form-group"><label>分类 *</label><select id="tplCategory" style="width:100%;padding:8px;border:1px solid #d9d9d9;border-radius:6px"></select></div>
+      <div class="form-group"><label>作者</label><input type="text" id="tplAuthor" style="width:100%;padding:8px;border:1px solid #d9d9d9;border-radius:6px"></div>
+      <div class="form-group"><label>标签（逗号分隔）</label><input type="text" id="tplTags" style="width:100%;padding:8px;border:1px solid #d9d9d9;border-radius:6px"></div>
+    </div>
+    <div class="form-group"><label>描述</label><textarea id="tplDesc" rows="2" style="width:100%;padding:8px;border:1px solid #d9d9d9;border-radius:6px"></textarea></div>
+    <div class="form-group"><label>模板正文（JSON，template.json 内容）*</label>
+      <textarea id="tplContent" rows="12" style="width:100%;padding:8px;border:1px solid #d9d9d9;border-radius:6px;font-family:monospace;font-size:12px">{}</textarea>
+      <div style="font-size:12px;color:#999;margin-top:4px">设备类用 devices:[{device_code,name,components:[…]}]，报警类用 alarm_rules:[…]，保存即生成新版本，旧版本可在版本列表回退。</div>
+    </div>
+    <div class="form-group"><label>变更说明</label><input type="text" id="tplChangelog" style="width:100%;padding:8px;border:1px solid #d9d9d9;border-radius:6px"></div>
+    <div style="text-align:right;margin-top:12px">
+      <button class="btn btn-gray" onclick="tplHideEditor()">取消</button>
+      <button class="btn btn-primary" onclick="tplSave()">保存</button>
+    </div>
+  </div>
+</div>
+</div>
+
 <div class="page" id="page-ext">
 <div class="ai-row" style="background:#f0f7ff;border:1px solid #cfe4ff;border-radius:8px;padding:10px 14px">
 <span style="flex:1;font-size:13px;color:#333">☁ 云数据同步下来的数据会自动进入<b>「数据管理」</b>：在<b>历史数据</b>里可按云数据库筛选，在<b>趋势图</b>里可直接出曲线，并同步触发 TAG→报警→维护。</span>
@@ -1407,12 +1482,13 @@ function showPage(id, btn) {
   var page = document.getElementById('page-' + id);
   if (page) page.classList.add('active');
   if (btn) btn.classList.add('active');
-  var titles = {dash:'Dashboard',dev:'Devices',comm:'Comm',data:'Data',danal:'Data Analysis',ai:'AI Center',know:'Knowledge',maint:'Maintenance',asset:'Assets',lab:'Lab',ext:'Cloud Data',sys:'System'};
+  var titles = {dash:'Dashboard',dev:'Devices',comm:'Comm',data:'Data',danal:'Data Analysis',ai:'AI Center',know:'Knowledge',tpl:'Templates · 模板中心',maint:'Maintenance',asset:'Assets',lab:'Lab',ext:'Cloud Data',sys:'System'};
   var _zh = (typeof translations !== 'undefined' && translations[currentLang]) ? translations[currentLang]['pageTitle_' + id] : null;
   document.getElementById('pageTitle').textContent = _zh || titles[id] || id.toUpperCase();
   if (id === 'dash') initHealthChart();
   if (id === 'danal') { initDAPage(); populateDaImportDeviceSelect(); }
   if (id === 'know') loadKnowledgeDocsFromDatabase();
+  if (id === 'tpl') tplOnEnter();
   if (id === 'maint') loadWorkOrdersFromDatabase();
   if (id === 'asset') loadAssetsFromDatabase();
   if (id === 'lab') loadLabSamplesFromDatabase();
@@ -4287,6 +4363,338 @@ function exportDA_CSV() {
   a.download = 'data_analysis_export.csv';
   a.click();
   URL.revokeObjectURL(a.href);
+}
+
+
+// ==================== Template Center 模板中心（计划书第十二章） ====================
+var tplState = {templates: [], categories: [], currentCategory: '', currentId: null, editingId: null, lastPreview: null};
+
+function tplOnEnter() { tplLoadCategories(); tplLoad(); }
+
+function tplSwitchTab(tab, btn) {
+  document.querySelectorAll('#page-tpl .tc').forEach(function(el){ el.classList.remove('active'); });
+  document.querySelectorAll('#page-tpl .tab-btn').forEach(function(b){ b.classList.remove('active'); });
+  document.getElementById('tpl-' + tab).classList.add('active');
+  if (btn) btn.classList.add('active');
+  if (tab === 'logs') tplLoadLogs();
+  if (tab === 'list') tplLoad();
+}
+
+function tplLoadCategories() {
+  aimsFetch('/templates/categories').then(function(d){
+    tplState.categories = d.categories || [];
+    var box = document.getElementById('tplCategories');
+    var html = '<div style="border:1px solid #eee;border-radius:8px;overflow:hidden">';
+    html += '<div class="tpl-cat tpl-cat-active" data-cat="" onclick="tplPickCategory(\'\')">全部模板</div>';
+    tplState.categories.forEach(function(c){
+      html += '<div class="tpl-cat" data-cat="' + c + '" onclick="tplPickCategory(\'' + c + '\')">' + c + '</div>';
+    });
+    html += '</div>';
+    box.innerHTML = html;
+  }).catch(function(e){ box.innerHTML = '<div style="color:#f5222d;font-size:12px">加载分类失败：' + e.message + '</div>'; });
+}
+
+function tplPickCategory(cat) {
+  tplState.currentCategory = cat;
+  document.querySelectorAll('.tpl-cat').forEach(function(el){
+    el.classList.toggle('tpl-cat-active', el.getAttribute('data-cat') === cat);
+  });
+  tplLoad();
+}
+
+function tplLoad() {
+  var box = document.getElementById('tplCards');
+  var params = [];
+  if (tplState.currentCategory) params.push('category=' + encodeURIComponent(tplState.currentCategory));
+  var q = (document.getElementById('tplSearch') || {}).value || '';
+  if (q) params.push('q=' + encodeURIComponent(q));
+  var src = (document.getElementById('tplSourceFilter') || {}).value || '';
+  if (src) params.push('source=' + src);
+  var url = '/templates' + (params.length ? '?' + params.join('&') : '');
+  aimsFetch(url).then(function(list){
+    tplState.templates = list || [];
+    if (!tplState.templates.length) {
+      box.innerHTML = '<div style="color:#999;padding:24px;text-align:center">该筛选条件下暂无模板。点「导入模板」或「新建模板」开始。</div>';
+      return;
+    }
+    box.innerHTML = tplState.templates.map(function(t){
+      var srcBadge = t.source === 'system' ? '<span style="background:#e6f7ff;color:#1890ff;border-radius:4px;padding:1px 6px;font-size:11px">系统</span>'
+        : t.source === 'imported' ? '<span style="background:#fff7e6;color:#fa8c16;border-radius:4px;padding:1px 6px;font-size:11px">导入</span>'
+        : '<span style="background:#f6ffed;color:#52c41a;border-radius:4px;padding:1px 6px;font-size:11px">我的</span>';
+      return '<div class="card" style="cursor:pointer" onclick="tplShowDetail(' + t.id + ')">' +
+        '<div style="display:flex;justify-content:space-between;align-items:center">' +
+        '<b style="font-size:14px">' + tplEsc(t.name) + '</b>' + srcBadge + '</div>' +
+        '<div style="color:#888;font-size:12px;margin:6px 0">' + tplEsc(t.category) + ' · v' + t.current_version +
+        (t.is_default ? ' · <span style="color:#fa8c16">默认</span>' : '') +
+        (t.is_favorite ? ' · <span style="color:#faad14">★</span>' : '') + '</div>' +
+        '<div style="font-size:12px;color:#666;height:32px;overflow:hidden">' + tplEsc(t.description || '') + '</div>' +
+        '<div style="font-size:11px;color:#aaa;margin-top:6px">作者：' + tplEsc(t.author || '-') + '</div>' +
+        '</div>';
+    }).join('');
+  }).catch(function(e){
+    box.innerHTML = '<div style="color:#f5222d;padding:16px">加载失败：' + e.message + '</div>';
+  });
+}
+
+function tplEsc(x) { return String(x == null ? '' : x).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+
+function tplShowDetail(id) {
+  tplState.currentId = id;
+  aimsFetch('/templates/' + id).then(function(t){
+    var d = document.getElementById('tplDetail');
+    d.style.display = 'block';
+    var catBtns = '';
+    d.innerHTML =
+      '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">' +
+      '<b style="font-size:16px">' + tplEsc(t.name) + '</b>' +
+      '<div>' +
+      '<button class="btn btn-primary" onclick="tplApply(' + t.id + ')">应用模板</button> ' +
+      '<button class="btn btn-success" onclick="tplEdit(' + t.id + ')">编辑</button> ' +
+      '<button class="btn btn-gray" onclick="tplDuplicate(' + t.id + ')">复制</button> ' +
+      '<button class="btn btn-gray" onclick="tplDownload(' + t.id + ')">导出 .aimstpl</button> ' +
+      '<button class="btn btn-warning" onclick="tplToggleFav(' + t.id + ')">收藏</button> ' +
+      '<button class="btn btn-danger" onclick="tplDelete(' + t.id + ')">删除</button>' +
+      '</div></div>' +
+      '<div style="font-size:12px;color:#666;margin-bottom:8px">分类：' + tplEsc(t.category) + ' · 版本：v' + t.current_version +
+      ' · 来源：' + t.source + ' · 作者：' + tplEsc(t.author || '-') + ' · UID：<code>' + tplEsc(t.template_uid) + '</code></div>' +
+      '<div style="font-size:13px;margin-bottom:8px">' + tplEsc(t.description || '（无描述）') + '</div>' +
+      '<details style="margin:10px 0"><summary style="cursor:pointer;font-weight:bold">版本历史（点击展开/回退）</summary><div id="tplVersions" style="margin-top:8px">加载中…</div></details>' +
+      '<details open><summary style="cursor:pointer;font-weight:bold">模板正文（template.json，当前版本）</summary>' +
+      '<pre style="background:#fff;border:1px solid #eee;border-radius:6px;padding:12px;font-size:11px;overflow:auto;max-height:300px">' + tplEsc(JSON.stringify(t.content, null, 2)) + '</pre></details>';
+    tplLoadVersions(id);
+  }).catch(function(e){ alert('加载模板详情失败：' + e.message); });
+}
+
+function tplLoadVersions(id) {
+  aimsFetch('/templates/' + id + '/versions').then(function(vs){
+    var box = document.getElementById('tplVersions');
+    if (!box) return;
+    if (!vs.length) { box.innerHTML = '<div style="color:#999;font-size:12px">无版本记录</div>'; return; }
+    box.innerHTML = '<table style="width:100%;font-size:12px;border-collapse:collapse">' +
+      '<tr style="color:#999"><th style="text-align:left;padding:4px">版本</th><th style="text-align:left">说明</th><th style="text-align:left">时间</th><th></th></tr>' +
+      vs.map(function(v){
+        return '<tr><td style="padding:4px">v' + v.version + '</td><td>' + tplEsc(v.changelog || '—') + '</td>' +
+        '<td>' + (v.created_at ? new Date(v.created_at).toLocaleString() : '-') + '</td>' +
+        '<td><button class="btn btn-link" style="padding:2px 6px" onclick="tplRestore(' + id + ',' + v.version + ')">回退到此版</button></td></tr>';
+      }).join('') + '</table>';
+  }).catch(function(e){ if (document.getElementById('tplVersions')) document.getElementById('tplVersions').textContent = '加载失败：' + e.message; });
+}
+
+function tplRestore(id, version) {
+  if (!confirm('回退到 v' + version + '？将生成一个新版本（历史保留，可再次回退）。')) return;
+  aimsFetch('/templates/' + id + '/versions/' + version + '/restore', {method:'POST'})
+    .then(function(){ tplShowDetail(id); tplLoad(); }).catch(function(e){ alert('回退失败：' + e.message); });
+}
+
+function tplApply(id) {
+  var t = tplState.templates.filter(function(x){ return x.id === id; })[0] || {};
+  var deviceHint = '';
+  if ((t.category || '').indexOf('报警') === 0 || t.category === 'TAG 点位') {
+    deviceHint = '\n（该模板将应用到目标设备；留空则使用系统中第一台设备）';
+  }
+  if (!confirm('应用模板「' + (t.name || id) + '」？\n将在业务数据中创建对应记录（幂等：已存在的编码会跳过，不会覆盖现有数据）。' + deviceHint)) return;
+  aimsFetch('/templates/' + id + '/apply', {method:'POST', body: JSON.stringify({})})
+    .then(function(res){
+      var created = (res.result || {}).created || {};
+      var lines = Object.keys(created).map(function(k){ return k + ': ' + (Array.isArray(created[k]) ? created[k].join(', ') || '（无新增，均已存在）' : created[k]); });
+      alert('应用成功：\n' + (lines.join('\n') || '（无新增数据）'));
+      tplShowDetail(id);
+    })
+    .catch(function(e){ alert('应用失败：' + e.message); });
+}
+
+function tplDuplicate(id) {
+  aimsFetch('/templates/' + id + '/duplicate', {method:'POST'}).then(function(){ tplLoad(); alert('已复制为「我的模板」。'); })
+    .catch(function(e){ alert('复制失败：' + e.message); });
+}
+
+function tplToggleFav(id) {
+  aimsFetch('/templates/' + id + '/favorite', {method:'POST'}).then(function(){ tplShowDetail(id); tplLoad(); })
+    .catch(function(e){ alert('操作失败：' + e.message); });
+}
+
+function tplDelete(id) {
+  if (!confirm('删除该模板？\n只删除模板与其版本历史；已应用生成的设备/报警等业务数据不受影响。')) return;
+  aimsFetch('/templates/' + id, {method:'DELETE'}).then(function(){ tplState.currentId = null; document.getElementById('tplDetail').style.display='none'; tplLoad(); })
+    .catch(function(e){ alert('删除失败：' + e.message); });
+}
+
+// 模板导出是二进制（.aimstpl / zip）且需要 Bearer 认证，用 fetch+blob 触发下载
+function tplBlobDownload(method, path, body, fallbackName) {
+  var token = aimsTokens().access;
+  var opts = { method: method };
+  if (body) { opts.body = JSON.stringify(body); opts.headers = { 'Content-Type': 'application/json' }; }
+  if (token) opts.headers = Object.assign(opts.headers || {}, { 'Authorization': 'Bearer ' + token });
+  fetch(apiBase() + path, opts).then(function(r){
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    var cd = r.headers.get('Content-Disposition') || '';
+    var m = cd.match(/filename="?([^";]+)"?/);
+    var name = m ? m[1] : fallbackName;
+    return r.blob().then(function(b){
+      var url = URL.createObjectURL(b);
+      var a = document.createElement('a');
+      a.href = url; a.download = name;
+      document.body.appendChild(a); a.click(); a.remove();
+      URL.revokeObjectURL(url);
+    });
+  }).catch(function(e){ alert('导出失败（请先登录）：' + e.message); });
+}
+
+function tplDownload(id) { tplBlobDownload('GET', '/templates/' + id + '/export', null, 'template.aimstpl'); }
+
+function tplExportAllCustom() {
+  if (!confirm('导出全部「我的模板 + 已导入模板」为一个 ZIP？')) return;
+  tplBlobDownload('POST', '/templates/export/batch', {all_custom: true}, 'aims-templates.zip');
+}
+
+// ---------- 新建/编辑 ----------
+function tplShowCreate() {
+  tplState.editingId = null;
+  document.getElementById('tplEditorTitle').textContent = '新建模板';
+  document.getElementById('tplName').value = '';
+  document.getElementById('tplAuthor').value = '';
+  document.getElementById('tplTags').value = '';
+  document.getElementById('tplDesc').value = '';
+  document.getElementById('tplChangelog').value = '';
+  document.getElementById('tplContent').value = '{\n  "devices": [\n    {"device_code": "DEV-{n}", "name": "设备 {n}", "protocol": "Modbus TCP",\n     "components": [{"component_name": "主测量值", "unit": "%"}]}\n  ],\n  "count": 1\n}';
+  var sel = document.getElementById('tplCategory');
+  sel.innerHTML = tplState.categories.map(function(c){ return '<option>' + c + '</option>'; }).join('') || '<option>设备台账</option>';
+  document.getElementById('tplEditor').style.display = 'block';
+}
+
+function tplEdit(id) {
+  aimsFetch('/templates/' + id).then(function(t){
+    if (t.source === 'system' && !confirm('这是系统内置模板：不允许改名/改分类，但可以基于它保存新版本。继续？')) return;
+    tplState.editingId = id;
+    document.getElementById('tplEditorTitle').textContent = '编辑模板 #' + id + '（保存将生成 v' + (t.current_version + 1) + '）';
+    document.getElementById('tplName').value = t.name;
+    var sel = document.getElementById('tplCategory');
+    sel.innerHTML = tplState.categories.map(function(c){ return '<option' + (c === t.category ? ' selected' : '') + '>' + c + '</option>'; }).join('');
+    if (t.source === 'system') sel.setAttribute('disabled','disabled'); else sel.removeAttribute('disabled');
+    document.getElementById('tplAuthor').value = t.author || '';
+    document.getElementById('tplTags').value = (t.tags || []).join(', ');
+    document.getElementById('tplDesc').value = t.description || '';
+    document.getElementById('tplContent').value = JSON.stringify(t.content, null, 2);
+    document.getElementById('tplChangelog').value = '';
+    document.getElementById('tplEditor').style.display = 'block';
+  }).catch(function(e){ alert('加载失败：' + e.message); });
+}
+
+function tplHideEditor() { document.getElementById('tplEditor').style.display = 'none'; }
+
+function tplSave() {
+  var name = document.getElementById('tplName').value.trim();
+  var category = document.getElementById('tplCategory').value;
+  var contentRaw = document.getElementById('tplContent').value;
+  var content;
+  try { content = JSON.parse(contentRaw); }
+  catch (e) { alert('模板正文不是合法 JSON：' + e.message); return; }
+  if (!name) { alert('请填写模板名称。'); return; }
+  var payload = {
+    name: name, category: category,
+    description: document.getElementById('tplDesc').value.trim() || null,
+    author: document.getElementById('tplAuthor').value.trim() || null,
+    tags: document.getElementById('tplTags').value.split(/[,，]/).map(function(x){return x.trim();}).filter(Boolean),
+    content: content,
+    changelog: document.getElementById('tplChangelog').value.trim() || null
+  };
+  var call = tplState.editingId
+    ? aimsFetch('/templates/' + tplState.editingId, {method:'PUT', body: JSON.stringify(payload)})
+    : aimsFetch('/templates', {method:'POST', body: JSON.stringify(payload)});
+  call.then(function(){ tplHideEditor(); tplLoad(); if (tplState.editingId) tplShowDetail(tplState.editingId); else tplShowCreateDone(); })
+    .catch(function(e){ alert('保存失败：' + e.message); });
+}
+function tplShowCreateDone(){ /* 新建后列表自动刷新即可 */ }
+
+// ---------- 导入（先预览后确认，12.5 第四/五步） ----------
+function tplImportPreview(input) {
+  var files = Array.prototype.slice.call(input.files || []);
+  if (!files.length) return;
+  var box = document.getElementById('tplPreview');
+  box.innerHTML = '<div style="color:#1890ff">解析中（共 ' + files.length + ' 个文件，自动安全检查：ZIP 路径穿越 / 体积 / JSON 结构 / 版本兼容）…</div>';
+  var fd = new FormData();
+  files.forEach(function(f){ fd.append('files', f); });
+  var token = aimsTokens().access;
+  var opts = { method: 'POST', body: fd };
+  if (token) opts.headers = { 'Authorization': 'Bearer ' + token };
+  fetch(apiBase() + '/templates/import?confirm=false', opts)
+    .then(function(r){ return r.json().catch(function(){return {};}); })
+    .then(function(data){
+      if (!data.results) { box.innerHTML = '<div style="color:#f5222d">预览失败（HTTP ' + r.status + '）：请先登录。</div>'; return; }
+      tplRenderPreview(data, files);
+    })
+    .catch(function(e){ box.innerHTML = '<div style="color:#f5222d">预览失败：' + e.message + '</div>'; });
+  input.value = '';
+}
+
+function tplRenderPreview(data, files) {
+  var box = document.getElementById('tplPreview');
+  var anyFail = data.results.some(function(r){ return !r.ok; });
+  var html = '<div style="padding:12px;background:' + (anyFail ? '#fff2f0' : '#f6ffed') + ';border-radius:8px;margin-bottom:12px">' +
+    '解析完成：' + data.ok_count + ' / ' + data.total + ' 个模板可导入。' +
+    (data.ok_count && !anyFail ? ' 确认无误后点击下方按钮正式导入。' : '') + '</div>';
+  data.results.forEach(function(r){
+    if (!r.ok) {
+      html += '<div style="padding:10px;border:1px solid #ffa39e;background:#fff;border-radius:6px;margin-bottom:8px">' +
+        '<b>' + tplEsc(r.filename) + '</b> <span style="color:#f5222d">✘ 导入失败</span>' +
+        '<div style="font-size:12px;color:#cf1322;margin-top:4px">原因：' + tplEsc(r.error || '未知') + '</div></div>';
+      return;
+    }
+    var m = r.manifest || {};
+    var conflicts = (r.conflicts || []).map(function(c){ return '<li>' + tplEsc(c.detail) + '</li>'; }).join('');
+    var missing = (r.missing_dependencies || []).join(', ');
+    html += '<div style="padding:10px;border:1px solid #d9d9d9;background:#fff;border-radius:6px;margin-bottom:8px">' +
+      '<b>' + tplEsc(r.filename) + '</b> ✔ 结构检查通过' +
+      '<div style="font-size:12px;color:#555;margin:6px 0">名称：' + tplEsc(m.name) + ' · 分类：' + tplEsc(m.category) +
+      ' · 包版本：' + tplEsc(m.version) + ' · 最低兼容：' + tplEsc(m.min_aims_version) + ' · 作者：' + tplEsc(m.author || '-') + '</div>' +
+      '<div style="font-size:12px;color:#555">内容：' + JSON.stringify(r.summary || {}) + '</div>' +
+      (conflicts ? '<div style="font-size:12px;color:#fa8c16;margin-top:4px">版本冲突：<ul style="margin:4px 0">' + conflicts + '</ul></div>' : '') +
+      (missing ? '<div style="font-size:12px;color:#fa8c16">缺失依赖：' + tplEsc(missing) + '</div>' : '') +
+      (r.scripts && r.scripts.count ? '<div style="font-size:12px;color:#999">脚本文件 ' + r.scripts.count + ' 个：默认禁用，系统内无执行入口。</div>' : '') +
+      '<div style="font-size:11px;color:#aaa">SHA-256：' + tplEsc(r.sha256 || '') + '</div></div>';
+  });
+  if (data.ok_count > 0) {
+    html += '<button class="btn btn-primary" id="tplConfirmBtn" onclick="tplImportConfirm()">确认导入（' + data.ok_count + ' 个）</button>';
+    tplState.lastPreview = files;
+  }
+  box.innerHTML = html;
+}
+
+function tplImportConfirm() {
+  var files = tplState.lastPreview || [];
+  if (!files.length) return;
+  var fd = new FormData();
+  files.forEach(function(f){ fd.append('files', f); });
+  var token = aimsTokens().access;
+  var opts = { method: 'POST', body: fd };
+  if (token) opts.headers = { 'Authorization': 'Bearer ' + token };
+  document.getElementById('tplConfirmBtn').disabled = true;
+  fetch(apiBase() + '/templates/import?confirm=true', opts)
+    .then(function(r){ return r.json().catch(function(){return {};}); })
+    .then(function(data){
+      var ok = (data.results || []).filter(function(r){ return r.ok; }).length;
+      var fail = (data.results || []).length - ok;
+      document.getElementById('tplPreview').innerHTML =
+        '<div style="padding:12px;background:' + (fail ? '#fff7e6' : '#f6ffed') + ';border-radius:8px">导入完成：成功 ' + ok + ' 个' +
+        (fail ? '，失败 ' + fail + ' 个（失败原因见下方导入记录）' : '') + '。模板已进入「已导入模板」分类，可立即使用。</div>';
+      tplLoad();
+    })
+    .catch(function(e){ alert('导入失败：' + e.message); document.getElementById('tplConfirmBtn').disabled = false; });
+}
+
+function tplLoadLogs() {
+  aimsFetch('/templates/import/logs').then(function(rows){
+    var box = document.getElementById('tplLogList');
+    if (!rows.length) { box.innerHTML = '<div style="color:#999">还没有导入记录。</div>'; return; }
+    box.innerHTML = '<table style="width:100%;font-size:12px;border-collapse:collapse">' +
+      '<tr style="color:#999"><th style="text-align:left;padding:4px">时间</th><th style="text-align:left">文件</th><th style="text-align:left">模板</th><th style="text-align:left">状态</th><th style="text-align:left">原因</th></tr>' +
+      rows.map(function(r){
+        return '<tr><td style="padding:4px">' + (r.created_at ? new Date(r.created_at).toLocaleString() : '-') + '</td>' +
+        '<td>' + tplEsc(r.filename) + '</td><td>' + tplEsc(r.template_name || '-') + '</td>' +
+        '<td>' + (r.status === 'success' ? '<span style="color:#52c41a">成功</span>' : '<span style="color:#f5222d">失败</span>') + '</td>' +
+        '<td style="color:#999;max-width:320px;word-break:break-all">' + tplEsc(r.reason || '') + '</td></tr>';
+      }).join('') + '</table>';
+  }).catch(function(e){ document.getElementById('tplLogList').innerHTML = '<div style="color:#f5222d">加载失败：' + e.message + '</div>'; });
 }
 
 // ===== Initialize =====

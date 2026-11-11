@@ -16,6 +16,9 @@ from app.models.external_source import (  # noqa
     ExternalSource, ExternalDatabase, ExternalSyncLog, DataContinuityGap
 )
 
+from app.models.template import (  # noqa
+    TemplateRegistry, TemplateVersion, TemplateImportLog, TemplateUsageLog, TemplateDependency
+)
 from app.models.industrial import (  # noqa
     CommunicationConnection, DeviceTag, TagMapping, AcquisitionEvent, DataQualityEvent,
     ImportValidation, AIModelVersion, AIFeedback

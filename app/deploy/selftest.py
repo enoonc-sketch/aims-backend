@@ -121,6 +121,7 @@ class Suite:
             self._ai()
             self._dashboard()
             self._excel()
+            self._templates()
             self._users()
             self._cleanup()
         return self.report()
@@ -433,6 +434,78 @@ class Suite:
             return True, f"审计日志可读（{len(items or [])} 条）"
 
         self.check("审计日志", audit, critical=False)
+
+    def _templates(self) -> None:
+        """模板中心（计划书第十二章）：内置种子 → 创建 → 应用 → 导出 → 清理。"""
+        def builtin():
+            code, body = self.c.get("/api/v1/templates?source=system")
+            if code != 200:
+                return False, f"HTTP {code} {str(body)[:120]}"
+            if len(body or []) < 15:
+                return False, f"内置模板仅 {len(body or [])} 个（应 ≥15）"
+            self.ctx["tpl_builtin_count"] = len(body)
+            return True, f"内置模板 {len(body)} 个"
+
+        if not self.check("模板中心-内置模板", builtin):
+            return
+
+        name = f"自检模板 {uuid.uuid4().hex[:6]}"
+        tpl_id = None
+
+        def create():
+            nonlocal tpl_id
+            code, body = self.c.post("/api/v1/templates", {
+                "name": name, "category": "设备台账",
+                "content": {"devices": [{"device_code": "SELFTEST-TPL-1", "name": "自检模板设备"}],
+                            "count": 1}})
+            if code not in (200, 201):
+                return False, f"HTTP {code} {str(body)[:160]}"
+            tpl_id = body["id"]
+            return True, f"id={tpl_id}"
+
+        if not self.check("模板中心-创建", create, critical=False):
+            return
+
+        def apply():
+            code, body = self.c.post(f"/api/v1/templates/{tpl_id}/apply", {})
+            if code != 200:
+                return False, f"HTTP {code} {str(body)[:160]}"
+            created = (body.get("result", {}).get("created", {}) or {}).get("devices") or []
+            if "SELFTEST-TPL-1" in created:
+                return True, f"生成设备 {created}"
+            # 幂等分支：设备已存在（如上次自检残留）也应存在且可查到
+            code, devs = self.c.get("/api/v1/devices?q=SELFTEST-TPL-1")
+            found = [d for d in (devs or []) if d.get("device_code") == "SELFTEST-TPL-1"] if code == 200 else []
+            return bool(found), f"幂等跳过（设备已存在）：查询到 {len(found)} 台"
+
+        self.check("模板中心-应用生成设备", apply)
+
+        def export():
+            code, raw = self.c.call("GET", f"/api/v1/templates/{tpl_id}/export", raw=True)
+            if code != 200 or not raw:
+                return False, f"HTTP {code}"
+            import io as _io
+            import zipfile as _zf
+
+            zf = _zf.ZipFile(_io.BytesIO(raw))
+            return "manifest.json" in zf.namelist(), f"{len(raw)} 字节，含 manifest.json"
+
+        self.check("模板中心-导出aimstpl", export)
+
+        def cleanup_tpl():
+            # 先删模板，再删本次应用生成的自检设备，不给现场留垃圾数据
+            code, _ = self.c.delete(f"/api/v1/templates/{tpl_id}")
+            code2, devs = self.c.get("/api/v1/devices?q=SELFTEST-TPL-1")
+            removed = 0
+            for d in (devs or []):
+                if d.get("device_code") == "SELFTEST-TPL-1":
+                    c3, _ = self.c.delete(f"/api/v1/devices/{d['id']}")
+                    if c3 in (200, 204):
+                        removed += 1
+            return code in (200, 204) and (removed == 0 or code2 == 200), \
+                f"模板删除 HTTP {code}，清理自检设备 {removed} 台"
+
+        self.check("模板中心-删除(保留业务数据)", cleanup_tpl, critical=False)
 
     def _cleanup(self) -> None:
         def drop_device():

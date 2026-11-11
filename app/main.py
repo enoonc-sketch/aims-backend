@@ -11,6 +11,7 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from app.api.v1.router import api_router
 from app.core.config import settings
+from app.deploy import APP_VERSION
 from app.core.middleware import (
     AuditMiddleware,
     HTTPSEnforcementMiddleware,
@@ -106,6 +107,11 @@ async def lifespan(app: FastAPI):
             from app.db.init_db import init_db
             init_db(seed=True)
             logger.info("Database initialized (AUTO_INIT_DB=true).")
+            from app.db.session import SessionLocal
+            from app.services.template_center import seed_builtin_templates
+
+            with SessionLocal() as _s:
+                seed_builtin_templates(_s)  # 官方内置模板（幂等）
         except RuntimeError:
             raise  # security-relevant startup failure (e.g. weak bootstrap password): do not run
         except Exception as e:
@@ -123,7 +129,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title=settings.APP_NAME,
     description="Industrial Analyzer Smart O&M Platform — backend API",
-    version="0.5.10",
+    version=APP_VERSION,
     lifespan=lifespan,
     # API docs are off in production unless ENABLE_DOCS=true
     docs_url="/docs" if settings.docs_enabled else None,
@@ -186,11 +192,11 @@ if CORES_DIR is not None:
 def health_check():
     if settings.is_production:
         # no environment / filesystem details on an unauthenticated endpoint
-        return {"status": "ok", "version": "0.5.10"}
+        return {"status": "ok", "version": APP_VERSION}
     return {
         "status": "ok",
         "app": settings.APP_NAME,
-        "version": "0.5.10",
+        "version": APP_VERSION,
         "env": settings.APP_ENV,
         "database": "sqlite" if settings.is_sqlite else "postgresql",
         "frontend": str(FRONTEND_PATH) if FRONTEND_PATH else None,

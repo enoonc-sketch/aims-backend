@@ -26,7 +26,7 @@
     默认从 app/deploy/__init__.py 读取，一般不用手动指定。
 
 .EXAMPLE
-    .\package_release.ps1 -Installer ..\installer_output\AIMS-0.5.10-x64-Setup.exe
+    .\package_release.ps1 -Installer ..\installer_output\AIMS-0.6.0-x64-Setup.exe
 #>
 [CmdletBinding()]
 param(

@@ -128,11 +128,17 @@ class App:
             self._fail("AIMS 启动失败", f"{exc}\n\n{traceback.format_exc(limit=6)}\n\n日志：{self.log_path}")
             return False
         self.splash.close()
-        if self.open_ui:
+        # 桌面窗口模式（计划书 3.1-A）：由 run() 里的 pywebview 原生窗口负责打开界面，
+        # 这里就不再先用 Edge --app 弹一个窗口（避免双窗口）。
+        if self.open_ui and not self._use_desktop_window():
             url = self.supervisor.ui_url()
             how = win.open_app_window(url)
             logger.info("UI opened (%s): %s", how, url)
         return True
+
+    def _use_desktop_window(self) -> bool:
+        """托盘可用且 pywebview 可导入时，用原生桌面窗口代替浏览器窗口。"""
+        return bool(self.want_tray and win.webview_available())
 
     def _fail(self, title: str, message: str) -> None:
         detail = ""
@@ -240,6 +246,10 @@ class App:
             if getattr(sys, "frozen", False) and "--quiet" not in sys.argv:
                 pass
             return 3
+        # AIMS Desktop 原生窗口（pywebview/WebView2）：窗口即应用，关闭窗口退出 AIMS。
+        # 托盘转后台线程继续提供备份/诊断/退出菜单；WebView2 缺失时走下面传统路径。
+        if self._use_desktop_window() and not self._exit.is_set():
+            return self._run_desktop_window()
         if not self.want_tray or not win.tray_available():
             if self.want_tray:
                 logger.warning("pystray/Pillow unavailable — running without tray")
@@ -255,6 +265,29 @@ class App:
             if not self._exit.is_set():
                 self._menu_quit()
         return 0
+
+    def _run_desktop_window(self) -> int:
+        """原生窗口模式：主线程跑 WebView2 消息循环，托盘在后台线程。"""
+        logger.info("desktop window mode (pywebview/WebView2)")
+        icon_path = self.root / "assets" / "aims.ico"
+        self.icon = win.build_tray_icon(icon_path)
+        tray_detached = False
+        if self.icon is not None:
+            tray_detached = win.run_tray_detached(self.icon, list(self.menu_items()))
+            if tray_detached:
+                win.notify(self.icon, PRODUCT_NAME, "AIMS 已在运行，关闭窗口或从托盘退出")
+        try:
+            win.run_desktop_window(self.supervisor.ui_url(), title=f"{PRODUCT_NAME} {_version()}")
+            # 窗口被用户关闭 —— 与双击退出等价：整组服务安全下线
+            return 0
+        except Exception as exc:  # noqa: BLE001
+            # WebView2 Runtime 缺失等环境问题：回退到浏览器窗口，功能不缩水
+            logger.warning("desktop window unavailable (%s); falling back to browser", exc)
+            win.open_app_window(self.supervisor.ui_url())
+            return self._run_headless()
+        finally:
+            if not self._exit.is_set():
+                self._menu_quit()
 
     def _run_headless(self) -> int:
         """无托盘：前台守到用户 Ctrl+C，或在后端异常退出时结束。"""

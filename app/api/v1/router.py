@@ -5,6 +5,7 @@ from app.api.v1 import (
     ai_devices,
     ai_feedback,
     import_validation,
+    templates,
     industrial,
     ai_studio,
     alarms,
@@ -45,3 +46,4 @@ api_router.include_router(external_data.router)
 api_router.include_router(system.router)
 api_router.include_router(industrial.router)
 api_router.include_router(import_validation.router)
+api_router.include_router(templates.router)

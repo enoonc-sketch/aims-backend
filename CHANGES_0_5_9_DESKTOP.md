@@ -68,3 +68,25 @@
 - ARM64 的数据库走 x64 仿真 → 未真机验收前不得宣称原生支持
 - 单机部署：应用与数据库只监听 `127.0.0.1`
 - SQLite → PostgreSQL 不自动迁移（结构差异大，需重新导入台账/测点）
+
+
+---
+
+## 第十二章：模板中心与自定义模板系统（2026-11-11 追加）
+
+**新增模块**
+- `app/models/template.py`：template_registry / template_versions / template_import_logs /
+  template_usage_logs / template_dependencies 五张新表（不触碰任何现有业务表）
+- `app/services/template_package.py`：.aimstpl 打包/解析 + 安全校验（路径穿越、zip 炸弹、
+  结构校验、版本兼容、脚本禁用）
+- `app/services/template_center.py`：20 个内置官方模板种子、应用引擎（设备/TAG/网关/报警/
+  资产/SOP/知识库七类真实落库）、版本管理、导入导出
+- `app/api/v1/templates.py`：18 个接口（列表/创建/编辑/复制/收藏/默认/导入预览+确认/
+  批量包导入/导入日志/单导出/批量导出/版本列表/版本比较/回退/应用/使用日志）
+- `frontend.html`：模板中心页面（列表/分类/详情/编辑器/导入预览/版本历史/导入记录）
+- `tests/test_templates.py`：18 项测试；`app/deploy/selftest.py` 新增 5 个模板自检项
+
+**设计取舍**
+- 不支持自动应用的分类（图表/工作流/数据库查询等）明确返回 400，不做假成功。
+- scripts/ 目录只存储、默认禁用，全系统无执行入口。
+- 应用模板幂等：已存在的编码跳过，绝不覆盖业务数据；删除模板不删业务数据。

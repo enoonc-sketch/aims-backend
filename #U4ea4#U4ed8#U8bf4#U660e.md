@@ -102,11 +102,11 @@ PostgreSQL 官方同样没有 Windows ARM64 版本。默认产出 `-arm64-emulat
 cd <源码>\build
 .\dependency_check.ps1 -ForBuild
 .\build_x64.ps1 -UpdateLock          # 首次会下载内置 PostgreSQL 并记录 SHA-256
-.\package_release.ps1 -Installer ..\installer_output\AIMS-0.5.10-x64-Setup.exe
+.\package_release.ps1 -Installer ..\installer_output\AIMS-0.6.0-x64-Setup.exe
 
 # 2) 在干净 Win11 x64（断网）上验收
-#    拷入 release\AIMS-0.5.10\ 整个目录
-.\tools\Windows-Acceptance.ps1 -Setup .\AIMS-0.5.10-x64-Setup.exe `
+#    拷入 release\AIMS-0.6.0\ 整个目录
+.\tools\Windows-Acceptance.ps1 -Setup .\AIMS-0.6.0-x64-Setup.exe `
     -Arm64:$false -ReportDir .\acceptance
 
 # 3) 把 acceptance\acceptance-report.md 追加到 docs\测试报告.md 附录

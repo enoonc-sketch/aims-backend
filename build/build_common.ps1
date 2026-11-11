@@ -221,7 +221,11 @@ function Build-Launcher {
         '--windowed', '--noupx',
         '--hidden-import', 'pystray._win32',
         '--hidden-import', 'PIL.ImageDraw',
-        '--collect-submodules', 'app.launcher') -What '启动器打包'
+        '--collect-submodules', 'app.launcher',
+        # AIMS Desktop 原生窗口（pywebview → Windows 上经 pythonnet 驱动 WebView2）
+        '--collect-submodules', 'webview',
+        '--hidden-import', 'pythonnet',
+        '--hidden-import', 'clr_loader') -What '启动器打包'
 }
 
 function Build-Backend {

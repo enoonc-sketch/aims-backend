@@ -1,6 +1,6 @@
 # AIMS Backend — Industrial Analyzer Smart O&M Platform
 
-> **Windows 离线安装版（0.5.10）**
+> **Windows 离线安装版（0.6.0，基准 0.5.9）**
 >
 > 本仓库现在同时是「Windows 桌面独立软件」的源码：单文件安装包、零外部依赖、
 > 内置 PostgreSQL 16 + pgvector + 本地 AI 引擎、桌面托盘启动器、一键备份/恢复、
@@ -14,18 +14,20 @@
 > | [docs/功能对照表.md](docs/功能对照表.md) | 136 个接口逐模块对照，证明功能零删减 |
 > | [docs/依赖与许可证清单.md](docs/依赖与许可证清单.md) · [LICENSES.txt](LICENSES.txt) | 组件、版本、许可证 |
 > | [docs/测试报告.md](docs/测试报告.md) | 已执行的测试与证据，以及**尚未执行**的部分 |
+> | [docs/模板中心说明.md](docs/模板中心说明.md) | .aimstpl 模板包、导入导出、应用机制、安全限制 |
+> | [docs/计划书对照与差距分析.md](docs/计划书对照与差距分析.md) | 产品化计划书逐条对照、技术选型理由、剩余任务分解 |
 >
 > 快速上手（构建机）：
 >
 > ```powershell
 > cd build; .\build_x64.ps1          # 依赖 → 内置PG → 打包 → 冒烟 → 出安装包
-> .\package_release.ps1 -Installer ..\installer_output\AIMS-0.5.10-x64-Setup.exe
+> .\package_release.ps1 -Installer ..\installer_output\AIMS-0.6.0-x64-Setup.exe
 > ```
 >
 > 快速上手（目标机，无需任何开发环境）：
 >
 > ```
-> 双击 AIMS-0.5.10-x64-Setup.exe → 桌面 AIMS 图标 → 托盘菜单
+> 双击 AIMS-0.6.0-x64-Setup.exe → 桌面 AIMS 图标 → 托盘菜单
 > 运维：C:\Program Files\AIMS\tools\*.ps1（备份/恢复/诊断/卸载）
 > 验收：tools\Windows-Acceptance.ps1 -Setup <安装包>
 > ```
