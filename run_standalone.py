@@ -189,40 +189,7 @@ def _attach_debug_console() -> None:
         pass
 
 
-def _redirect_missing_streams() -> None:
-    """GUI 子系统 EXE（console=False）下 sys.stdin/stdout/stderr 全是 None。
-
-    这不是摆设：uvicorn 的 ColourizedFormatter 在 configure_logging() 里调
-    `sys.stdout.isatty()`，None 没有这个方法，`config.load()` 直接抛 ValueError，
-    服务线程还没起就死了；threading 的异常钩子往 None 的 stderr 写也被吞掉，
-    用户最后只看到一个"Press Enter to exit..."的空弹窗——1.0.0 正式版就是
-    这样在真机上启动即崩溃的。这是 PyInstaller 官方文档记载的 windowed 模式
-    陷阱，标准做法就是启动第一时间把缺失的流接到空设备（`logging` 的文件
-    handler 与 aims_crash.log 不受影响，诊断信息仍在）。
-
-    已有真控制台（源码运行 / 调试模式 / 从 cmd 启动）时不动；流存在时不动。
-    """
-    if _has_console():
-        return
-    for name, mode in (("stdin", "r"), ("stdout", "w"), ("stderr", "w")):
-        try:
-            if getattr(sys, name, None) is None:
-                setattr(sys, name, open(os.devnull, mode, encoding="utf-8", errors="replace"))
-        except Exception:
-            pass
-
-
-def _pause_dialog_text(detail: str = "") -> str:
-    """GUI 弹窗里显示的文本：必须是真正的报错原因 + 崩溃日志位置。
-
-    绝不能只是等回车的提示——1.0.0 的弹窗只显示 "Press Enter to exit..."，
-    用户完全不知道发生了什么、日志在哪，排障无从下手。
-    """
-    body = detail.strip() or "AIMS Backend 启动失败。"
-    return body + "\n\n按确定退出。"
-
-
-def _pause(detail: str = "") -> None:
+def _pause(msg: str = "Press Enter to exit...") -> None:
     """启动失败时停住进程让用户读到原因——但绝不能为此弹 CMD 窗口。
 
     * 有控制台（源码运行 / 调试模式 / 从 cmd 启动）：按回车退出；
@@ -230,22 +197,31 @@ def _pause(detail: str = "") -> None:
       点确定退出。原来的 `os.system("pause")` 会瞬间拉起一个 cmd.exe
       窗口，在 GUI 模式下正是"莫名其妙闪出黑框"的来源之一。
 
-    `detail` 是真正的报错原因（含崩溃日志路径），调用点必须传；不传时
-    弹窗只会显示一句"启动失败"，和 1.0.0 的空弹窗一样没用。
+    GUI 模式下 stdout 是看不见的：如果只弹一句默认提示，用户拿到手的
+    信息量为零（1.0.0 现场实测：弹窗只有 "Press Enter to exit..."，真正的
+    崩溃原因全在看不见的控制台里）。所以弹窗正文 = 启动过程捕获到的输出
+    （_capture_output）+ 提示语，让用户第一次就能看到失败原因。
     """
     if os.name == "nt" and not _has_console():
         try:
             import ctypes
 
             MB_OK, MB_ICONERROR = 0x0, 0x10
-            ctypes.windll.user32.MessageBoxW(
-                None, _pause_dialog_text(detail), "AIMS Backend", MB_OK | MB_ICONERROR)
+            ctypes.windll.user32.MessageBoxW(None, _pause_dialog_text(msg),
+                                             "AIMS Backend", MB_OK | MB_ICONERROR)
+            # 点掉弹窗后直接打开报告所在文件夹：用户不需要知道路径怎么写，
+            # 也能把文件直接拖进聊天窗口发给维护者。
+            if _LAST_DIAGNOSE is not None:
+                try:
+                    os.startfile(str(_LAST_DIAGNOSE.parent))  # noqa: S606 (Windows only)
+                except Exception:
+                    pass
             return
         except Exception:
             pass
     try:
         if sys.stdin and sys.stdin.isatty():
-            input("Press Enter to exit...")
+            input(msg)
         else:
             import time
             time.sleep(30)
@@ -255,6 +231,80 @@ def _pause(detail: str = "") -> None:
             time.sleep(30)
         except Exception:
             pass
+
+
+# 启动输出捕获（见 _pause / _capture_output）
+_output_buffer: list[str] = []
+# 捕获缓冲上限：长期运行的服务会持续写日志（uvicorn 的访问日志也走 stderr），
+# 不封顶会一直涨内存。弹窗只要最近一段，超过上限就从前面丢掉。
+_OUTPUT_LIMIT_CHARS = 65536
+
+
+def _trim_output_buffer() -> None:
+    total = sum(len(s) for s in _output_buffer)
+    while total > _OUTPUT_LIMIT_CHARS and _output_buffer:
+        total -= len(_output_buffer.pop(0))
+
+
+class _Tee:
+    """把写入复制进 _output_buffer 的流包装（模块级定义：跨调用 isinstance 才成立）。"""
+
+    def __init__(self, *streams):
+        self._streams = [s for s in streams if s is not None]
+
+    def write(self, s):
+        _output_buffer.append(s)
+        _trim_output_buffer()
+        for st in self._streams:
+            try:
+                st.write(s)
+            except Exception:
+                pass
+        return len(s)
+
+    def flush(self):
+        for st in self._streams:
+            try:
+                st.flush()
+            except Exception:
+                pass
+
+    def isatty(self):
+        return False
+
+    @property
+    def encoding(self):
+        for st in self._streams:
+            if hasattr(st, "encoding"):
+                return st.encoding
+        return "utf-8"
+
+
+def _output_tail(limit: int = 1500) -> str:
+    """最近捕获到的输出（弹窗正文用），超长只保留尾部（最新信息最重要）。"""
+    text = "".join(_output_buffer).strip()
+    return text[-limit:] if len(text) > limit else text
+
+
+def _pause_dialog_text(msg: str) -> str:
+    """GUI 报错弹窗的正文：捕获到的输出 + 提示语。"""
+    tail = _output_tail()
+    return (tail + "\n\n— " + msg) if tail else msg
+
+
+def _capture_output() -> None:
+    """把 stdout/stderr 复制进内存缓冲。
+
+    GUI 子系统 EXE 平时没有控制台，print 出去的排障信息用户根本看不到；
+    崩溃时 _pause 用这些内容弹窗，用户才能读到真实原因而不必去翻
+    aims_crash.log。已捕获的输出同时会写到原流（有的话），不影响
+    调试控制台 / 文件日志 / 从 cmd 启动时的正常输出。
+    """
+    for name in ("stdout", "stderr"):
+        cur = getattr(sys, name, None)
+        if isinstance(cur, _Tee):  # 调试模式重接控制台后再调用，不重复包裹
+            continue
+        setattr(sys, name, _Tee(cur))
 
 
 def _write_crash_log(base: Path, exc: BaseException) -> Path:
@@ -439,6 +489,30 @@ def _setup_file_logging(base: Path):
 _MUTEX_NAME = "AIMS-Backend-Mutex"
 _MUTEX_HANDLE = None  # kept for the life of the process; Windows frees it on exit
 
+# 最近一次生成的诊断报告（GUI 弹窗后自动打开所在文件夹，方便用户发给维护者）
+_LAST_DIAGNOSE: Path | None = None
+
+
+def _diagnose(base: Path, reason: str) -> Path | None:
+    """启动失败时生成脱敏诊断报告。
+
+    现场只有一句"装完打不开"时，维护者需要的不是猜，而是路径、权限、配置、
+    数据库状态、端口占用和各日志尾部——全写进一个文件，用户转发即可。
+    本函数失败绝不影响后续错误处理（诊断不能成为新的故障点）。
+    """
+    global _LAST_DIAGNOSE
+    try:
+        from app.deploy.diagnose import write_report
+
+        path = write_report(base, reason=reason)
+        if path is not None:
+            _LAST_DIAGNOSE = path
+            print(f"诊断报告: {path}")
+            print("（把这份文件发给维护者即可定位；其中不含任何口令明文）")
+        return path
+    except Exception:
+        return None
+
 
 def _hold_app_mutex():
     """Windows only: create a named mutex so the installer (AppMutex in AIMS-Backend.iss)
@@ -568,14 +642,39 @@ def _probe_health(base_url: str, scheme: str, timeout: float = 0.5):
         return None
 
 
+def _install_thread_hook() -> None:
+    """线程里未捕获的异常也要留下痕迹。
+
+    uvicorn 的 `Server.run` 在 lifespan 启动失败时调用 `sys.exit(1)`——在工作
+    线程里这是"静默死亡"：主线程只看到 server_thread 不再存活，用户看到的是
+    "服务没能启动"，真正原因（数据库连不上、迁移失败、端口被抢）藏在 uvicorn
+    的日志里。把 SystemExit 与其它异常都打到 stdout（GUI 模式下会被
+    _capture_output 捕获进弹窗），排障时就不会只剩一句 "stopped right after starting"。
+    """
+    def hook(args) -> None:
+        try:
+            if args.exc_type is SystemExit:
+                print(f"服务线程退出：SystemExit({args.exc_value})", flush=True)
+                return
+            print("服务线程异常：", flush=True)
+            traceback.print_exception(args.exc_type, args.exc_value, args.exc_traceback)
+        except Exception:
+            pass
+
+    try:
+        threading.excepthook = hook
+    except Exception:  # pragma: no cover - 极老 Python / 受限环境
+        pass
+
+
 def main() -> int:
     # GUI 子系统 EXE：显式调试模式（AIMS_DEBUG_CONSOLE=1）时先分配控制台，
     # 让部署/启动阶段的 print 与 traceback 恢复可见；普通用户路径不设该变量。
     if getattr(sys, "frozen", False):
         _attach_debug_console()
-    # 没有控制台时（GUI 子系统 EXE）标准流全是 None：uvicorn 配日志时调
-    # sys.stdout.isatty() 会直接炸掉服务线程。先接到空设备，再干别的。
-    _redirect_missing_streams()
+    # 越早捕获越好：main 里任何 print 出来的排障信息，GUI 模式崩溃时都要能进弹窗
+    _capture_output()
+    _install_thread_hook()
     base = _base_dir()
 
     # `AIMS-Backend.exe deploy <cmd>` — installer / operations CLI. Handled before
@@ -594,6 +693,16 @@ def main() -> int:
     # 合并自 secure 包 run_standalone.py 的分发, 接在 0.5.0 的 app.cli 包上。
     if len(sys.argv) > 1:
         cmd = sys.argv[1]
+        if cmd == "diagnose":
+            # 启动失败后按这个命令跑一次，得到一份可直接转发的脱敏报告；
+            # 它不启动数据库、不监听端口，只收集事实。
+            from app.deploy.diagnose import collect, render, write_report
+
+            print(render(collect(base, reason="手动执行 diagnose")))
+            path = write_report(base, reason="手动执行 diagnose")
+            if path is not None:
+                print(f"\n已保存：{path}")
+            return 0
         if cmd == "setup":
             from app.cli.setup import main as setup_main
             return setup_main(sys.argv[2:], base=base)
@@ -644,6 +753,7 @@ def main() -> int:
             pass
         if detail:
             print("\n最近的日志：\n" + detail)
+        _diagnose(base, f"数据库启动失败：{exc}")
         if os.name == "nt":
             try:
                 from app.deploy import runtime as rt
@@ -692,8 +802,9 @@ def main() -> int:
                     _open_ui_window(base_url, settings)
                 return 0
             print(f"Port {port} is already used by another service. Set PORT in .env (or free the port) and start again.")
+            _diagnose(base, f"端口 {port} 被其他服务占用")
             if getattr(sys, "frozen", False):
-                _pause(f"端口 {port} 已被其他程序占用，AIMS 无法启动。\n请关闭占用该端口的程序，或在 .env 里改 PORT 再启动。")
+                _pause()
             return 1
 
         _hold_app_mutex()  # lets the installer detect a running AIMS (after the single-instance check)
@@ -726,21 +837,7 @@ def main() -> int:
         # thread for its GUI loop. When the main thread ends (window closed),
         # the process exits and the daemon thread dies with it.
         # (Same pattern as the sing-box generator, app.py:279.)
-        #
-        # 线程里的异常不会冒到主线程：threading 的异常钩子往 stderr 写，而 GUI
-        # 子系统下 stderr 是 None，异常会被悄悄吞掉。包一层把它记下来，启动
-        # 失败时才能在弹窗里告诉用户真正的原因（1.0.0 的 uvicorn 日志配置
-        # 崩溃就是这样丢的：config.load() 里 ColourizedFormatter 调
-        # sys.stdout.isatty()，None 没有这个方法）。
-        _server_error: list[BaseException] = []
-
-        def _run_server_guarded() -> None:
-            try:
-                server.run()
-            except BaseException as exc:  # noqa: BLE001 — 记下来给 not-healthy 分支用
-                _server_error.append(exc)
-
-        server_thread = threading.Thread(target=_run_server_guarded, daemon=True)
+        server_thread = threading.Thread(target=server.run, daemon=True)
         server_thread.start()
         _watch_parent(server)
 
@@ -758,28 +855,16 @@ def main() -> int:
                 break
             time.sleep(0.15)
         if not healthy:
-            # 1.0.0 以前这里不写崩溃日志、弹窗也不带原因，用户只能看到
-            # "Press Enter to exit..."。现在：线程里记下的异常写进崩溃日志，
-            # 弹窗显示真正的原因 + 日志路径。
-            detail = ""
-            if _server_error:
-                exc = _server_error[0]
-                log_path = _write_crash_log(base, exc)
-                detail = f"服务启动失败：{exc}\n\n崩溃日志：{log_path}"
-                print(f"The server thread died at startup: {exc!r} (crash log: {log_path})")
-            elif not server_thread.is_alive():
+            if not server_thread.is_alive():
                 print(f"The server stopped right after starting. Most likely port {port} is already in use "
                       "by another program: set PORT in .env or free the port. See the messages above.")
-                detail = (f"服务启动后立即退出。最可能的原因是端口 {port} 已被其他程序占用："
-                          f"请关闭占用该端口的程序，或在 .env 里改 PORT 再启动。")
             else:
                 print("Server did not become ready in 15 s.")
                 print(f"If it actually started, open manually: {base_url}/ui")
-                detail = ("服务 15 秒内没有就绪。\n"
-                          f"如果它其实已经起来了，直接打开：{base_url}/ui")
             server.should_exit = True
+            _diagnose(base, f"服务未能在 15 秒内就绪（端口 {port}）")
             if getattr(sys, "frozen", False):
-                _pause(detail)
+                _pause()  # keep the console open so a double-click user can read the message
             return 1
 
         opened_window = False
@@ -824,10 +909,8 @@ def main() -> int:
         print("  python -m app.cli gen-secret")
         print("Or run the one-step setup wizard (key + HTTPS cert + first admin):")
         print("  python run_standalone.py setup")
-        log_path = _write_crash_log(base, exc)
-        _pause(f"配置错误，AIMS 拒绝启动：\n{exc}\n\n崩溃日志：{log_path}\n"
-                "可用环境变量或 .env 文件提供配置（见 .env.example），或运行：\n"
-                "  python run_standalone.py setup")
+        _diagnose(base, f"配置校验失败：{exc}")
+        _pause()
         return 2
     except Exception as exc:
         print("\n" + "!" * 60)
@@ -843,7 +926,8 @@ def main() -> int:
         print("  3. Run from cmd:  AIMS-Backend.exe")
         print("  4. Re-build with build_exe.bat")
         print("!" * 60)
-        _pause(f"启动失败：{exc}\n\n崩溃日志：{log_path}")
+        _diagnose(base, f"启动异常：{exc.__class__.__name__}: {exc}")
+        _pause()
         return 1
 
 
@@ -853,10 +937,13 @@ if __name__ == "__main__":
     except Exception:
         traceback.print_exc()
         try:
-            log_path = _write_crash_log(_base_dir(), Exception("top-level"))
+            _write_crash_log(_base_dir(), Exception("top-level"))
         except Exception:
-            log_path = None
-        _pause("启动失败（顶层异常）。"
-               + (f"\n\n崩溃日志：{log_path}" if log_path else ""))
+            pass
+        try:
+            _diagnose(_base_dir(), "顶层未捕获异常")
+        except Exception:
+            pass
+        _pause()
         code = 1
     sys.exit(code)

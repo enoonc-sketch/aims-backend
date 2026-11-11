@@ -180,6 +180,13 @@ def build_env(layout: Layout, state: dict, secrets: dict, *, port: int, api_port
 
         "AIMS_MANAGED_RUNTIME": "1",
         "AIMS_PG_PORT": str(port),
+        # 集群与数据根必须落盘。provision 时可能用了非默认位置（D 盘、独立数据盘、
+        # 迁移后的目录）——只存在当时的环境变量里的话，重启后（安装器/启动器/计划任务/
+        # 直接用 EXE 启动）拿不到这些值，就会去默认路径找 PG_VERSION，然后报
+        # "数据库程序已就位，但数据目录不存在"：现象是"装完打不开"，原因却看不出。
+        "AIMS_PG_DATA": str(layout.pg_data),
+        "AIMS_PG_BINDIR": str(layout.pg_bin),
+        "AIMS_DATA_ROOT": str(layout.base),
         "AIMS_BACKUP_KEEP": "14",
         "AIMS_BACKUP_DIR": str(layout.backups_dir),
 

@@ -187,34 +187,38 @@ def test_launcher_exe_is_windowed():
 # EXE 的 sys.stdin/stdout/stderr 全是 None，uvicorn 的 ColourizedFormatter
 # 在 configure_logging() 里调 sys.stdout.isatty()，config.load() 直接抛
 # ValueError，服务线程还没起就死了；用户只看到一个 "Press Enter to exit..."
-# 的空弹窗。以下测试在 Linux 上模拟"流全是 None"的 windowed 环境，
-# 把这条因果链锁死。
+# 的空弹窗。
+#
+# 1.0.1 的修复是把缺失的流接到空设备；1.0.2 换成捕获式：_capture_output() 把
+# stdout/stderr 包进 _Tee（isatty() 返回 False，uvicorn 同样能配日志），
+# 同时把输出留进内存缓冲，崩溃时弹窗直接显示真实原因。以下测试在 Linux 上
+# 模拟"流全是 None"的 windowed 环境，把这条因果链锁死（来包的
+# test_run_standalone_diagnostics.py 只测捕获本身，不测 uvicorn 这一环）。
 # ---------------------------------------------------------------------------
 
-def test_windowed_exe_redirects_missing_streams(monkeypatch):
-    """缺失的标准流必须在启动第一时间接到空设备，否则任何碰流的代码都会炸。"""
+
+def test_windowed_exe_capture_restores_streams(monkeypatch):
+    """流全是 None 时捕获后必须有可用的流（isatty 存在且为 False），print 不崩。"""
     import sys
 
     import run_standalone
 
-    saved = (sys.stdin, sys.stdout, sys.stderr)
+    saved = (sys.stdout, sys.stderr)
     monkeypatch.setattr(sys, "stdin", None)
     monkeypatch.setattr(sys, "stdout", None)
     monkeypatch.setattr(sys, "stderr", None)
     try:
-        run_standalone._redirect_missing_streams()
-        assert sys.stdout is not None and sys.stderr is not None and sys.stdin is not None
-        assert sys.stdout.isatty() is False  # 空设备：不带颜色、不崩溃
+        run_standalone._output_buffer.clear()
+        run_standalone._capture_output()
+        assert sys.stdout is not None and sys.stderr is not None
+        assert sys.stdout.isatty() is False  # Tee：不带颜色、不崩溃
         print("x", flush=True)  # 1.0.0 以前这里（及所有 flush=True）都会炸
         sys.stdout.flush()
         sys.stderr.flush()
+        assert "x" in run_standalone._output_tail()
     finally:
-        for stream in (sys.stdin, sys.stdout, sys.stderr):
-            try:
-                if stream is not None and stream not in saved:
-                    stream.close()
-            except Exception:
-                pass
+        sys.stdout, sys.stderr = saved
+        run_standalone._output_buffer.clear()
 
 
 def test_uvicorn_config_loads_without_console(monkeypatch):
@@ -223,43 +227,56 @@ def test_uvicorn_config_loads_without_console(monkeypatch):
 
     import run_standalone
 
+    saved = (sys.stdout, sys.stderr)
     monkeypatch.setattr(sys, "stdin", None)
     monkeypatch.setattr(sys, "stdout", None)
     monkeypatch.setattr(sys, "stderr", None)
     try:
-        run_standalone._redirect_missing_streams()
+        run_standalone._output_buffer.clear()
+        run_standalone._capture_output()
         import uvicorn
         from fastapi import FastAPI
 
         config = uvicorn.Config(FastAPI(), host="127.0.0.1", port=8123, log_level="info")
         config.load()  # 1.0.0 在这里抛 ValueError: Unable to configure formatter 'default'
     finally:
-        for stream in (sys.stdin, sys.stdout, sys.stderr):
-            try:
-                if stream is not None:
-                    stream.close()
-            except Exception:
-                pass
+        sys.stdout, sys.stderr = saved
+        run_standalone._output_buffer.clear()
 
 
-def test_pause_dialog_shows_real_error():
-    """弹窗必须显示真正的报错原因 + 崩溃日志路径，绝不能只是一句等回车的提示。"""
+def test_pause_dialog_shows_captured_output():
+    """弹窗必须显示捕获到的真实报错，绝不能只是一句等回车的提示。"""
     import run_standalone
 
-    detail = "服务启动失败：Unable to configure formatter 'default'\n\n崩溃日志：C:\\AIMS\\aims_crash.log"
-    text = run_standalone._pause_dialog_text(detail)
-    assert "Unable to configure formatter" in text
-    assert "aims_crash.log" in text
-    assert text.strip() != "Press Enter to exit..."
-    assert "Press Enter to exit..." not in text
-    # 不传原因时也不能只剩一句提示：至少要说"启动失败"
-    assert "启动失败" in run_standalone._pause_dialog_text("")
+    run_standalone._output_buffer.clear()
+    run_standalone._output_buffer.append(
+        "服务线程异常：\nValueError: Unable to configure formatter 'default'\n"
+    )
+    try:
+        text = run_standalone._pause_dialog_text("Press Enter to exit...")
+        assert "Unable to configure formatter" in text
+        assert "Press Enter to exit..." in text
+        assert text.strip() != "Press Enter to exit..."
+    finally:
+        run_standalone._output_buffer.clear()
 
 
-def test_pause_calls_always_pass_detail():
-    """所有 _pause() 调用点都必须传报错原因——不带原因的调用就是 1.0.0 的空弹窗。"""
-    tree = ast.parse((ROOT / "run_standalone.py").read_text(encoding="utf-8-sig"))
-    bare = [n.lineno for n in ast.walk(tree)
-            if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)
-            and n.func.id == "_pause" and not n.args and not n.keywords]
-    assert not bare, f"以下 _pause() 调用没传报错原因，弹窗会是空的：行号 {bare}"
+def test_output_buffer_is_bounded(monkeypatch):
+    """长期运行的服务持续写日志，捕获缓冲必须封顶（否则内存无限涨）。"""
+    import sys
+
+    import run_standalone
+
+    saved = (sys.stdout, sys.stderr)
+    try:
+        run_standalone._output_buffer.clear()
+        run_standalone._capture_output()
+        for i in range(2000):
+            print(f"access-log-line-{i:04d} " + "x" * 60)
+        total = sum(len(s) for s in run_standalone._output_buffer)
+        assert total <= run_standalone._OUTPUT_LIMIT_CHARS
+        tail = run_standalone._output_tail()
+        assert "access-log-line-1999" in tail, "封顶后仍要保留最新的输出"
+    finally:
+        sys.stdout, sys.stderr = saved
+        run_standalone._output_buffer.clear()

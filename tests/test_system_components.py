@@ -161,3 +161,44 @@ def test_engine_info_endpoint(client):
     # 未安装 llama_cpp 时 installed 如实为 False，version 为 null（不伪造）
     if not data["installed"]:
         assert data["version"] is None
+
+
+# ------------------------------------------------------------------ 采集性能
+# 真实安装里 Models（多 GB GGUF）/Backup/Database 递归 stat 一遍要数秒，超过前端
+# 4 秒兜底超时后表现为"加载失败"。目录占用必须带 TTL 缓存，llama 导入结果同理。
+def test_dir_size_cache_hit_avoids_rescan(client, db_session, monkeypatch, tmp_path):
+    import time as _t
+
+    from app.api.v1 import system as sys_mod
+
+    logs = tmp_path / "Logs"
+    logs.mkdir()
+    (logs / "a.log").write_bytes(b"x" * 2048)
+    monkeypatch.setenv("AIMS_DATA_ROOT", str(tmp_path))
+    sys_mod._DIR_SIZE_CACHE.clear()
+    sys_mod._DIR_SIZE_CACHE[str(logs)] = (_t.monotonic(), 123.4)  # 预置缓存命中
+
+    resp = client.get("/api/v1/system/components")
+    assert resp.status_code == 200
+    assert resp.json()["disk_usage"]["logs_mb"] == 123.4, "命中缓存的目录不得重扫"
+
+
+def test_dir_size_cache_computes_then_caches(client, db_session, monkeypatch, tmp_path):
+    from app.api.v1 import system as sys_mod
+
+    logs = tmp_path / "Logs"
+    logs.mkdir()
+    (logs / "a.log").write_bytes(b"z" * 4096)
+    monkeypatch.setenv("AIMS_DATA_ROOT", str(tmp_path))
+    sys_mod._DIR_SIZE_CACHE.clear()
+
+    usage = client.get("/api/v1/system/components").json()["disk_usage"]
+    assert usage["logs_mb"] == round(4096 / 1048576, 1)
+    assert str(logs) in sys_mod._DIR_SIZE_CACHE, "首次计算后必须入缓存"
+
+
+def test_llama_engine_info_cached_across_calls(client):
+    from app.api.v1 import system as sys_mod
+
+    assert client.get("/api/v1/system/components").status_code == 200
+    assert sys_mod._LLAMA_ENGINE_INFO is not None, "llama 导入结果必须进程级缓存"

@@ -61,6 +61,30 @@ def _aware(dt: datetime) -> datetime:
     return dt if dt.tzinfo is not None else dt.replace(tzinfo=timezone.utc)
 
 
+def _refresh_grace_seconds() -> int:
+    """并发刷新的宽容窗口（秒）。AIMS_REFRESH_GRACE_SECONDS=0 可关闭。"""
+    import os
+
+    raw = os.environ.get("AIMS_REFRESH_GRACE_SECONDS", "5")
+    try:
+        return max(0, int(raw))
+    except ValueError:
+        return 5
+
+
+def _revoked_within_grace(revoked_at: Optional[datetime], now: datetime) -> bool:
+    """令牌是否在宽容窗口内被消费（用于区分"真并发"与"事后重放"）。
+
+    用绝对值差：赢家的消费时间戳可能比输家的 now 早/晚几个微秒（时钟采样
+    顺序不定），只看正向 age 会把真并发误判成重放。
+    """
+    grace = _refresh_grace_seconds()
+    if grace <= 0 or revoked_at is None:
+        return False
+    age = abs((now - _aware(revoked_at)).total_seconds())
+    return age <= grace
+
+
 def _client_ip(request: Request) -> Optional[str]:
     return request.client.host if request.client else None
 
@@ -214,11 +238,28 @@ def refresh(payload: RefreshRequest, request: Request, db: Session = Depends(get
         .values(revoked_at=now)
     )
     if consumed.rowcount == 0:
-        revoke_family(db, row.family_id, now)
-        record_audit(db, user_id=row.user_id, action="AUTH_REFRESH_REUSE_DETECTED", entity="auth",
-                     detail={"family": row.family_id, "reason": "concurrent"}, ip_address=ip)
-        db.commit()
-        raise invalid
+        # 两个请求**真正同时**拿着同一个 refresh token 到达（输家走到这里）。
+        # 典型场景是桌面窗口 + 浏览器两个页签同时刷新：旧逻辑把整族吊销，用户
+        # 毫无征兆地被强制登出（现场反馈"登录已失效"的真实成因之一）。宽容窗口
+        # 内的这种情况按良性并发处理：重读行确认消费时间，在窗口内就同族再签发
+        # 一对新令牌，两个页签都活着。窗口之外的重放仍是攻击信号，维持整族吊销。
+        # 重读消费时间。注意：本请求开头已经读过这行（当时 revoked_at 还是 NULL），
+        # 身份映射里是旧快照——直接 scalar 会拿到过期值，赢家的提交根本看不见，
+        # 宽容判断永远为 False。refresh() 强制从数据库重取。
+        try:
+            db.refresh(row)
+        except Exception:  # pragma: no cover - 行被并发删除的极端情况
+            pass
+        if not _revoked_within_grace(row.revoked_at, now):
+            revoke_family(db, row.family_id, now)
+            record_audit(db, user_id=row.user_id, action="AUTH_REFRESH_REUSE_DETECTED", entity="auth",
+                         detail={"family": row.family_id, "reason": "concurrent"}, ip_address=ip)
+            db.commit()
+            raise invalid
+        record_audit(db, user_id=row.user_id, action="AUTH_REFRESH_CONCURRENT_GRACE", entity="auth",
+                     detail={"family": row.family_id,
+                             "age_s": round((now - _aware(row.revoked_at)).total_seconds(), 3)},
+                     ip_address=ip)
 
     user = db.get(User, row.user_id)
     if user is None or not user.is_active:

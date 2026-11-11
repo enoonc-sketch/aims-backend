@@ -10,7 +10,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 from pydantic import ValidationError
-from sqlalchemy import select
+from sqlalchemy import select, update
 
 from app.core import config as config_mod
 from app.core import security
@@ -661,3 +661,89 @@ def test_frontend_precheck_runs_before_every_table_upload():
     body = body[:body.index("// ===== Translations")]
     assert body.index("aimsPrecheckFile") < body.index("aimsUpload(")
 
+
+
+# ------------------------------------------------------------------ 并发刷新宽容
+# 真实场景：桌面窗口 + 浏览器两个页签同时拿着同一份 refresh token 刷新。旧逻辑
+# 把后到的请求判成"重放"并吊销整族令牌——用户毫无征兆被强制登出（现场反馈
+# "登录已失效"的真实成因之一）。宽容窗口内的真并发应同族再签发；窗口外的
+# 顺序重放仍然是攻击信号，维持整族吊销。
+def _racing_db(db_session, row, monkeypatch):
+    """让 db_session 模拟"竞态输家"：读行时令牌未消费，条件 UPDATE 之前赢家先落库。
+
+    直接把行改成已撤销是不行的——那样输家的读行就会走进顺序重放分支，测不到
+    rowcount == 0 的真并发路径。这里拦截对 refresh_tokens 的条件 UPDATE，
+    先替"赢家"落库，再执行输家原本的语句（自然匹配 0 行）。
+    """
+    from sqlalchemy import update as sa_update
+
+    applied = {"done": False}
+    original = db_session.execute
+
+    def racing_execute(statement, *args, **kwargs):
+        if (not applied["done"] and getattr(statement, "is_update", False)
+                and statement.table.name == "refresh_tokens"):
+            applied["done"] = True
+            original(sa_update(RefreshToken)
+                     .where(RefreshToken.id == row.id, RefreshToken.revoked_at.is_(None))
+                     .values(revoked_at=datetime.now(timezone.utc)))
+        return original(statement, *args, **kwargs)
+
+    monkeypatch.setattr(db_session, "execute", racing_execute)
+
+
+def test_concurrent_refresh_race_within_grace_keeps_family_alive(anon_client, db_session, monkeypatch):
+    from types import SimpleNamespace
+
+    from app.api.v1.auth import refresh
+    from app.schemas.auth import RefreshRequest
+
+    _user(db_session)
+    t1 = _login(anon_client).json()
+    row = db_session.scalar(
+        select(RefreshToken).where(RefreshToken.token_hash == security.hash_refresh_token(t1["refresh_token"])))
+
+    _racing_db(db_session, row, monkeypatch)
+
+    req = SimpleNamespace(client=SimpleNamespace(host="127.0.0.1"),
+                          headers={"user-agent": "grace-test"})
+    resp = refresh(RefreshRequest(refresh_token=t1["refresh_token"]), request=req, db=db_session)
+    assert resp.access_token, "竞态输家必须拿到新令牌，而不是被登出"
+    # 新 access token 真的可用（同族签发、用户有效）
+    r = anon_client.get("/api/v1/auth/me", headers={"Authorization": f"Bearer {resp.access_token}"})
+    assert r.status_code == 200
+
+
+def test_concurrent_refresh_grace_can_be_disabled(anon_client, db_session, monkeypatch):
+    from types import SimpleNamespace
+
+    from fastapi import HTTPException
+
+    from app.api.v1.auth import refresh
+    from app.schemas.auth import RefreshRequest
+
+    monkeypatch.setenv("AIMS_REFRESH_GRACE_SECONDS", "0")
+    _user(db_session)
+    t1 = _login(anon_client).json()
+    row = db_session.scalar(
+        select(RefreshToken).where(RefreshToken.token_hash == security.hash_refresh_token(t1["refresh_token"])))
+    _racing_db(db_session, row, monkeypatch)
+
+    req = SimpleNamespace(client=SimpleNamespace(host="127.0.0.1"),
+                          headers={"user-agent": "grace-test"})
+    with pytest.raises(HTTPException) as ei:
+        refresh(RefreshRequest(refresh_token=t1["refresh_token"]), request=req, db=db_session)
+    assert ei.value.status_code == 401
+
+
+def test_sequential_replay_still_revokes_family(anon_client, db_session):
+    """宽容窗口只覆盖"真并发"（条件 UPDATE 竞态）；事后重放维持整族吊销。"""
+    _user(db_session)
+    t1 = _login(anon_client).json()
+    t2 = anon_client.post("/api/v1/auth/refresh", json={"refresh_token": t1["refresh_token"]}).json()
+    assert t2["access_token"]
+    # 顺序重放走 revoked_at 分支（非竞态），必须 401 且新令牌也死
+    replay = anon_client.post("/api/v1/auth/refresh", json={"refresh_token": t1["refresh_token"]})
+    assert replay.status_code == 401
+    assert anon_client.post("/api/v1/auth/refresh",
+                            json={"refresh_token": t2["refresh_token"]}).status_code == 401

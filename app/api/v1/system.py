@@ -179,10 +179,19 @@ def list_audit_logs(
 # pgvector 来自 pg_extension，前端/文档解析组件来自磁盘文件探测，AI 引擎来自
 # llama_cpp 与模型目录。不支持的指标明确返回 null，不伪造数值。
 # ---------------------------------------------------------------------------
+# 目录占用统计缓存：Models（多 GB 的 GGUF）/Backup/Database 递归 stat 一遍在真实
+# 安装上要数秒，而系统设置页每次切到 Components 页签都会请求。带 TTL 缓存既避免
+# 反复扫描，也避免超过前端 4 秒兜底超时后被掐断（表现为莫名其妙的加载失败）。
+_DIR_SIZE_TTL_SECONDS = 300.0
+_DIR_SIZE_CACHE: dict[str, tuple[float, float | None]] = {}
+_LLAMA_ENGINE_INFO: tuple | None = None
+
+
 @router.get("/components")
 def list_components(db: Session = Depends(get_db), _: User = Depends(get_current_user)):
     import platform as _platform
     import sys as _sys
+    import time as _time
     from pathlib import Path
 
     from app.deploy import APP_VERSION
@@ -190,14 +199,22 @@ def list_components(db: Session = Depends(get_db), _: User = Depends(get_current
     from sqlalchemy import text as _text
 
     def _dir_size_mb(p) -> float | None:
+        key = str(p)
+        now = _time.monotonic()
+        hit = _DIR_SIZE_CACHE.get(key)
+        if hit is not None and now - hit[0] < _DIR_SIZE_TTL_SECONDS:
+            return hit[1]
         try:
             base = Path(p)
             if not base.exists():
-                return None
-            total = sum(f.stat().st_size for f in base.rglob("*") if f.is_file())
-            return round(total / (1024 * 1024), 1)
+                value = None
+            else:
+                total = sum(f.stat().st_size for f in base.rglob("*") if f.is_file())
+                value = round(total / (1024 * 1024), 1)
         except Exception:
-            return None
+            value = None
+        _DIR_SIZE_CACHE[key] = (now, value)
+        return value
 
     components: list[dict] = []
 
@@ -245,16 +262,17 @@ def list_components(db: Session = Depends(get_db), _: User = Depends(get_current
         "license": "PostgreSQL Licence",
     })
 
-    # AI 引擎（llama.cpp；未安装时如实报告）
-    engine_version = None
-    engine_path = None
-    try:
-        import llama_cpp
-        engine_version = getattr(llama_cpp, "__version__", None)
-        engine_path = str(Path(llama_cpp.__file__).parent)
-        engine_status = "installed"
-    except Exception:
-        engine_status = "not-installed"
+    # AI 引擎（llama.cpp；未安装时如实报告）。import llama_cpp 在打包 EXE 里要
+    # 加载整个推理 DLL（秒级），每次点开页签都来一遍不可接受——结果进程级缓存。
+    global _LLAMA_ENGINE_INFO  # noqa: F824
+    if _LLAMA_ENGINE_INFO is None:
+        try:
+            import llama_cpp as _llama
+            _LLAMA_ENGINE_INFO = (getattr(_llama, "__version__", None),
+                                  str(Path(_llama.__file__).parent), "installed")
+        except Exception:
+            _LLAMA_ENGINE_INFO = (None, None, "not-installed")
+    engine_version, engine_path, engine_status = _LLAMA_ENGINE_INFO
     components.append({
         "name": "AI Engine (llama.cpp)",
         "category": "service",
@@ -277,18 +295,21 @@ def list_components(db: Session = Depends(get_db), _: User = Depends(get_current
         "license": "proprietary",
     })
 
-    # 目录占用汇总（模型/日志/备份）
-    data_root = getattr(settings, "AIMS_DATA_ROOT", None)
-    usage = {}
-    if data_root:
-        from pathlib import Path as _P
-        root = _P(str(data_root))
+    # 目录占用汇总（模型/日志/备份）。注意：Settings 里没有 AIMS_DATA_ROOT 字段，
+    # 原来的 getattr(settings, ...) 恒为 None——这个功能静默失效了很久。数据根
+    # 以部署布局为准（AIMS_DATA_ROOT 环境变量 / 安装布局），源码运行时是仓库就地目录。
+    try:
+        from app.deploy.paths import load_layout as _load_layout
+
+        root = _load_layout().base
         usage = {
             "models_mb": _dir_size_mb(root / "Models"),
             "logs_mb": _dir_size_mb(root / "Logs"),
             "backup_mb": _dir_size_mb(root / "Backup"),
             "database_mb": _dir_size_mb(root / "Database"),
         }
+    except Exception:
+        usage = {}
 
     return {"app_version": APP_VERSION, "python_version": _sys.version.split()[0],
             "platform": f"{_platform.system()} {_platform.release()}",

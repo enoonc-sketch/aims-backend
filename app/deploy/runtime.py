@@ -35,12 +35,38 @@ def _truthy(value: str | None, default: bool = True) -> bool:
     return value.strip().lower() not in ("0", "false", "no", "off")
 
 
+def _apply_config_paths(layout: Layout) -> dict[str, str]:
+    """把配置文件里的**路径**先应用到环境，再判断这个安装是不是托管形态。
+
+    安装时生成的目标位置可能不是默认值（AIMS_PG_DATA / AIMS_PG_BINDIR 指向
+    换过的盘、迁移后的目录）。如果先按默认值判断"没有 pgsql/data 就不是托管
+    安装"，就会跳过整个数据库引导流程——现象是装完打不开，或者更糟：静默回落
+    SQLite 以空库启动。真实环境变量仍然优先（apply_env 不覆盖已有值，支持工程师
+    可以临时把一次运行指向另一套库）。
+
+    只应用这几个路径键：AIMS_DATA_ROOT 不在此列——它就是用来定位本配置文件
+    自身的，读到文件之后才谈得上改它（鸡生蛋问题）。
+    """
+    try:
+        env = conf.load_env(layout) or {}
+    except Exception:
+        return {}
+    keys = ("AIMS_PG_DATA", "AIMS_PG_BINDIR", "AIMS_PG_HOME")
+    subset = {k: v for k, v in env.items() if k in keys and v}
+    if subset:
+        conf.apply_env(subset)
+    return env
+
+
 def bootstrap(base: Path, *, announce=None) -> dict[str, Any]:
     """Prepare a managed installation. Returns a small info dict; raises
     DeploymentError when the installation cannot run."""
     say = announce or (lambda msg: None)
     layout = load_layout(base)
     info: dict[str, Any] = {"managed": False}
+
+    env = _apply_config_paths(layout)
+
     if not managed_mode(layout):
         # 危险降级防护：pg_ctl 就位但数据目录不在，说明 AIMS_DATA_ROOT / AIMS_PG_DATA
         # 与安装时不一致（换了盘、改了环境变量、数据目录被移走）。此时如果继续启动，
@@ -58,7 +84,8 @@ def bootstrap(base: Path, *, announce=None) -> dict[str, Any]:
         return info
     info["managed"] = True
 
-    env = conf.load_env(layout)
+    if not env:
+        env = conf.load_env(layout)
     if not env or not env.get("DATABASE_URL", "").startswith("postgresql"):
         raise DeploymentError(
             f"配置文件缺失或不完整：{layout.env_file}\n"

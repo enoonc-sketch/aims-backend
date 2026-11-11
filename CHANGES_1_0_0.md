@@ -200,49 +200,114 @@
    在 `release-manifest.json` 记 `code_signing.signed=false`。
 5. **测试**：新增 `tests/test_observability.py`（20）、`test_release_chain.py` +4；全量 **583 passed / 2 skipped**。
 
+## 缺陷修复：启动失败弹窗不带原因（2026-11-11，现场反馈）
 
----
+**现象**：安装后启动失败，只弹「Press Enter to exit...」一个错误框，
+真实原因（配置错误/端口占用/崩溃堆栈）全部 print 到 GUI 子系统看不见的
+控制台里，用户拿到的信息量为零。
 
-## 合版说明（2026-11-11，对照已发布 1.0.0 核实）
+**修复**（`run_standalone.py`）：
 
-本包（品牌更新 + 可观测性/导入吞吐/签名自动化）底包基于 1.0.0 之前的桌面版源码，
-合版时从已发布 1.0.0 恢复了：NO_PROXY 修复及回归测试、CHANGES_0_5_4/0_5_5 合并版、
-丢失的 CHANGES_0_5_10.md 与 CHANGES_0_6_0.md、加固版 build-exe 工作流（示例标签改到
-v1.0.0）、修好的 AIMS-Backend.iss（GUID 花括号 bug + 已发布 AppId，版本号 1.0.0）、
-bat 的 webview hidden-import、lock 的 pefile/pywin32-ctypes、LICENSES.txt 版本、
-build/ 目录（5 个 .ps1；本包缺失，build-installer.yml 与签名测试都要用它）。
-本包自己的改动全部保留：新 LOGO（3 个图标 + frontend.html 内嵌 PNG）、结构化日志、
-运行指标、导入吞吐、签名自动化。另修：run_standalone.py 的 GUI 无控制台启动崩溃
-（见“启动崩溃修复”一节）。工作流文件不能用 push-files 推，须在网页上改。
+1. `_capture_output()`：进程启动即把 stdout/stderr 复制进内存缓冲
+   （`_Tee` 包装，原流照常收到输出——调试控制台、文件日志、cmd 管道不受影响）；
+2. `_pause()` 的 MessageBox 正文改为 `_pause_dialog_text()`：捕获到的输出
+   + 提示语，用户第一次就能在弹窗里读到失败原因；无输出时退回纯提示语；
+3. `sys.stdout` 为 None（GUI EXE 常态）时 print 也不崩；重复调用不套两层；
+4. 《安装说明》第八章新增「启动失败三步定位法」（弹窗即原因 / 调试控制台 /
+   aims_crash.log 查找顺序）。
 
----
+**测试**：`tests/test_run_standalone_diagnostics.py` 6 例，锁定捕获、
+弹窗正文、None 流、幂等与原流透传。注意：需要重新构建 Windows EXE 后生效。
 
-## 启动崩溃修复（2026-11-11，1.0.0 正式版真机启动即崩溃）
+## 缺陷修复：安装后无法运行的定位能力与两处真实成因（2026-11-11）
 
-现象：安装 1.0.0 后双击启动，只弹出一个标题 "AIMS Backend"、内容只有
-"Press Enter to exit..." 的报错框，没有任何原因，点确定后进程退出。
+现场反馈「装完以后不能运行」，弹窗只有一句 `Press Enter to exit...`，无法定位。
+本轮既补了排障能力，也修掉两个会导致"装完打不开"的真实缺陷。
 
-根因（两层）：
+### 1. 一键自诊断 `AIMS-Backend.exe diagnose`（`app/deploy/diagnose.py`）
 
-1. 1.0.0 把 `build_exe.spec` 改成 `console=False`（GUI 子系统）后，Windows
-   下 `sys.stdin/stdout/stderr` 全是 `None`。uvicorn 的 ColourizedFormatter
-   在 `configure_logging()` 里调 `sys.stdout.isatty()`，`None` 没有这个方法，
-   `config.load()` 直接抛 `ValueError: Unable to configure formatter 'default'`，
-   服务线程还没起就死了（0.6.0 的 `console=True` 下流存在，所以没暴露）。
-2. `run_standalone.py` 的 `_pause()` 把等回车的提示语当作弹窗文本显示，
-   真正的报错只印到没有控制台的 stdout（看不见），"未就绪"与"配置错误"
-   两条路径甚至不写崩溃日志。
+生成 `aims-diagnose-latest.txt`：**关键判断**（把事实翻译成病因）+ 运行环境 +
+路径与权限（存在/可写）+ 生效配置（口令脱敏）+ 数据库状态（托管模式、pg_ctl、
+是否初始化、postmaster PID、是否接受连接、端口占用）+ 各日志尾部。
+启动失败的四个分支（数据库启动失败、端口被占、15 秒未就绪、配置/启动异常）
+以及顶层未捕获异常都会自动生成该报告；GUI 弹窗关闭后自动打开报告所在文件夹。
+报告只输出白名单变量，`DATABASE_URL` 密码段与含 PASSWORD/SECRET/TOKEN 的值
+一律 `***`，可安全外发。
 
-修复（`run_standalone.py`）：
+### 2. 集群位置未落盘（真实成因，`app/deploy/conf.py`）
 
-- 启动第一时间 `_redirect_missing_streams()`：没有控制台时把缺失的三个流
-  接到空设备（PyInstaller 官方文档推荐的做法）；调试模式已挂上真控制台时不动。
-  接完后 `sys.stdout.isatty()` 返回 False，uvicorn 日志配置正常通过。
-- `_pause(detail)`：弹窗显示真正的报错原因 + 崩溃日志路径，不再显示提示语；
-  所有调用点都必须传原因（测试用 AST 锁死，不带原因的调用即失败）。
-- 服务线程包一层记异常：启动失败时弹窗能说出线程里真正的异常；
-  "未就绪"与"配置错误"路径也写崩溃日志。
+安装生成的 `Config\aims.env` 只写了 `AIMS_PG_PORT`，没写 `AIMS_PG_DATA` /
+`AIMS_PG_BINDIR` / `AIMS_DATA_ROOT`。若 provision 时用了非默认数据目录
+（换盘、迁移、独立数据盘），重启后没人知道集群在哪，程序去默认路径找
+`PG_VERSION` 找不到，报"数据目录不存在"——现象与原因完全对不上。现已全部落盘，
+配置文件自身即可描述部署形态。
 
-回归：`tests/test_no_console_window.py` 新增 4 项（流重定向、流全是 None 时
-`uvicorn.Config.load()` 成功、弹窗文本含真正原因、所有 `_pause()` 调用都带原因），
-Linux 上模拟 windowed 环境即可复现与验证，无需 Windows 真机。
+### 3. 引导顺序错误（真实成因，`app/deploy/runtime.py`）
+
+`bootstrap()` 原先先判断"是否托管安装"（按默认路径看 `pgsql/data` 是否存在）
+再读 `aims.env`，导致配置里的 `AIMS_PG_DATA` 在判断之后才生效：自定义数据目录
+的安装会被判成"非托管"，整个数据库引导被跳过（轻则打不开，重则静默以空 SQLite
+库启动）。现改为 `_apply_config_paths()` 先把配置中的路径应用到环境，再做形态
+判断；真实环境变量仍然优先（支持工程师可临时指向另一套库）。
+
+### 4. 测试
+
+### 5. 线程静默死亡无痕迹（`run_standalone.py`）
+
+uvicorn 的 `Server.run` 在 lifespan 启动失败时调用 `sys.exit(1)`——在工作线程里
+是静默死亡，主线程只看到"线程不再存活"，用户看到的是"服务没能启动"。新增
+`_install_thread_hook()`，把线程内的 SystemExit 与异常（含堆栈）打到输出，
+GUI 模式下会被 `_capture_output` 一并带进弹窗。
+
+### 6. 测试
+
+新增 `tests/test_diagnose.py` 11 例（脱敏、分节、报告落盘、布局残缺不崩、
+配置落盘、引导顺序、健康安装零告警）+ `test_run_standalone_diagnostics.py` 8 例；
+全量 **602 passed / 2 skipped**。
+
+## 缺陷修复：系统设置 → Components「登录已失效」（2026-11-11，现场反馈）
+
+三处叠加修复，并顺带修掉一个静默失效很久的功能：
+
+1. **跨页签并发刷新把整族令牌吊销**（真实成因）。桌面窗口 + 浏览器两个页签
+   同时拿同一份 refresh token 刷新时，后到的按"重放"处理、整族吊销——用户毫无
+   征兆被登出。后端新增并发宽容窗口（`AIMS_REFRESH_GRACE_SECONDS`，默认 5 秒）：
+   条件 UPDATE 竞态（真并发）在窗口内同族再签发，窗口外的顺序重放维持整族吊销
+   （重放检测回归测试原样通过）。前端在刷新前先看 localStorage——别的页签刚
+   换新过就直接复用，不再发第二次请求。真实 HTTP 并发实测：两请求均 200；
+   顺序重放仍 401 + 全族死。
+   实现细节：重读消费时间必须 `db.refresh(row)`——身份映射里是读行时的旧快照，
+   不强制刷新就永远判不到赢家的提交。
+2. **Components 页签的死路提示**（真实成因之二）。会话失效时只显示一句红字，
+   没有可操作的出口；且 `/system/components` 首次要递归统计 Models/Backup/
+   Database 目录占用（多 GB 时数秒），超过前端 4 秒兜底超时被掐断。修复：
+   该请求超时放宽到 20 秒并显示采集提示；401 时渲染「重新登录」按钮一键跳转；
+   目录占用带 300 秒 TTL 缓存；`import llama_cpp`（打包 EXE 里秒级）结果进程级
+   缓存。实测端点 3–4 ms。
+3. **目录占用统计静默失效**（隐藏 Bug）。`Settings` 没有 `AIMS_DATA_ROOT` 字段，
+   `getattr(settings, "AIMS_DATA_ROOT", None)` 恒为 None——功能从未生效过。改用
+   部署布局 `load_layout().base` 取数据根。
+4. 前端刷新失败时的错误消息统一为可操作的中文（原先是英文 "session expired"）。
+5. 测试：`test_security_hardening.py` +3（竞态宽容、可关闭、顺序重放仍吊销）、
+   `test_system_components.py` +3（缓存命中/计算入缓存/llama 缓存）。
+
+
+----
+
+## 合版说明（2026-11-11，1.0.2，对照已发布 1.0.1 核实）
+
+本包（启动诊断 + refresh 宽容窗口 + Components 修复）底包基于 1.0.0 源码，
+合版时从已发布 1.0.1 恢复了：NO_PROXY 修复及回归测试、CHANGES_0_5_4/0_5_5
+合并版、CHANGES_0_5_10.md、CHANGES_0_6_0.md 与 CHANGES_1_0_1.md、加固版
+build-exe 工作流（示例标签改到 v1.0.2）、修好的 AIMS-Backend.iss（GUID
+花括号 bug + 已发布 AppId，版本号 1.0.2）、bat 的 webview hidden-import、
+lock 的 pefile/pywin32-ctypes、LICENSES.txt 版本、build/ 目录（5 个 .ps1；
+本包缺失，签名测试与 build-installer.yml 都要用到它）。本包自己的改动全部
+保留：启动输出捕获与诊断报告、集群位置落盘、引导顺序、refresh 宽容窗口、
+Components 缓存与重登按钮。另改两处：`_capture_output` 的缓冲封顶 64KB
+（长期运行的服务持续写日志，不封顶会一直涨内存；弹窗只要最近一段）；
+test_no_console_window.py 的 4 项回归测试按捕获式设计重写（uvicorn 配日志
+仍是锁死点——来包的 test_run_standalone_diagnostics.py 只测捕获本身，
+不测 uvicorn 这一环）。安装说明里三处"1.0.0 已修/已修复/起"改成 1.0.2
+（这些修复不在已发布的 1.0.0 里）。工作流文件不能用 push-files 推，
+须在网页上改。
