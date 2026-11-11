@@ -293,3 +293,44 @@ def list_components(db: Session = Depends(get_db), _: User = Depends(get_current
     return {"app_version": APP_VERSION, "python_version": _sys.version.split()[0],
             "platform": f"{_platform.system()} {_platform.release()}",
             "components": components, "disk_usage": usage}
+
+
+# ---------- 运行指标（总方案 8 章"指标导出"）----------
+@router.get("/metrics")
+def runtime_metrics(
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_superuser),
+    format: str = Query("json", pattern="^(json|prometheus)$",
+                        description="json: 结构化快照；prometheus: 文本抓取格式"),
+):
+    """当前进程的运行指标快照 / Prometheus 抓取端点。
+
+    仅超管可读：内容含进程 ID、内存、线程数、路由分布，属运维数据，普通业务用户
+    不需要也不应该看到（同一套 RBAC 原则，见 /system/users）。
+
+    指标来自进程内计数器（`app/core/metrics.py`），重启即清零——单机部署下这是
+    可接受的，也让"重启后指标异常"本身成为一条有用的信号。数据库连接池状态在
+    PostgreSQL + QueuePool 下如实返回，SQLite/NullPool 返回 null。
+    """
+    from fastapi.responses import PlainTextResponse
+
+    from app.core.metrics import REGISTRY
+
+    if format == "prometheus":
+        return PlainTextResponse(REGISTRY.prometheus(),
+                                 headers={"Cache-Control": "no-store"})
+
+    snap = REGISTRY.snapshot()
+    pool_status = None
+    try:
+        pool = db.get_bind().pool
+        pool_status = {"class": type(pool).__name__}
+        if hasattr(pool, "status"):
+            pool_status["status"] = pool.status()
+        if hasattr(pool, "size") and callable(pool.size):
+            pool_status.update({"size": pool.size(), "checkedout": pool.checkedout(),
+                                "overflow": pool.overflow()})
+    except Exception:
+        pool_status = None
+    snap["database"] = {"dialect": db.get_bind().dialect.name, "pool": pool_status}
+    return snap

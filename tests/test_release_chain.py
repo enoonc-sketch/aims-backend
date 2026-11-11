@@ -208,3 +208,54 @@ def test_notify_popup_only_in_interactive_path() -> None:
     """-Notify 只在快捷方式里传，计划任务/命令行不能弹窗卡住自动化。"""
     tasks = (ROOT / "tools" / "Register-AimsTasks.ps1").read_text(encoding="utf-8-sig", errors="replace")
     assert "-Notify" not in tasks, "计划任务不应弹 Modal 窗口"
+
+
+# --------------------------------------------------------------------------- #
+# 代码签名（阶段 8/9 遗留 P0：签名自动化）
+#
+# 签名有两个"顺序"陷阱，出错时都不会被功能测试发现：
+#   1. 主程序必须在 ISCC 打包之前签，否则安装出来的 EXE 是未签名的；
+#   2. 安装包必须在生成 SHA256SUMS 之前签，否则签完哈希就变了，校验和永远对不上。
+# 下面用"文本位置比较"把这两个顺序钉死。
+# --------------------------------------------------------------------------- #
+def _read(rel: str) -> str:
+    return (ROOT / rel).read_text(encoding="utf-8-sig", errors="replace")
+
+
+def test_signing_helpers_exist_and_verify() -> None:
+    common = _read("build/build_common.ps1")
+    for fn in ("Resolve-SignTool", "Get-SignConfig", "Sign-AimsFile", "Get-SignatureInfo"):
+        assert f"function {fn}" in common, f"build_common.ps1 缺少 {fn}"
+    # 签名后必须验签，否则"签名失败"会被当成成功
+    assert "'verify', '/pa', '/v'" in common
+    assert "Get-AuthenticodeSignature" in common
+    # 证书只从环境变量读，不能写死在脚本/仓库里
+    assert "AIMS_SIGN_CERT" in common and "AIMS_SIGN_PASSWORD" in common
+
+
+def test_build_signs_binaries_before_compiling_installer() -> None:
+    build = _read("build/build_x64.ps1")
+    sign_pos = build.index("Sign-AimsFile -Path $backendExe")
+    iscc_pos = build.index("Build-Installer -Version $version -Arch x64")
+    assert sign_pos < iscc_pos, "主程序必须在编译安装包之前签名，否则安装包内是未签名 EXE"
+    # 安装包本身也要签，且签在冒烟/打包之前算出的哈希之后重新计算
+    assert build.count("Sign-AimsFile -Path $setup") == 1
+    assert "code_signing" in build
+
+
+def test_package_signs_before_writing_checksums() -> None:
+    pkg = _read("build/package_release.ps1")
+    sign_pos = pkg.index("Sign-AimsFile -Path $installerCopy")
+    sums_pos = pkg.index("Set-Content -LiteralPath (Join-Path $OutDir 'SHA256SUMS.txt')")
+    assert sign_pos < sums_pos, "签名必须早于校验和生成，否则签完哈希失真"
+    assert "code_signing" in pkg
+
+
+def test_unsigned_build_is_loud_not_silent() -> None:
+    """未配置证书时允许构建，但必须明确告警，不能静默发出未签名包。"""
+    pkg = _read("build/package_release.ps1")
+    common = _read("build/build_common.ps1")
+    assert "本次发行包未签名" in pkg
+    assert "未配置代码签名" in common
+    # 强制签名模式：缺配置直接失败
+    assert "AIMS_SIGN_REQUIRED" in common

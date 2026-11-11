@@ -12,6 +12,7 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 from app.api.v1.router import api_router
 from app.core.config import settings
 from app.deploy import APP_VERSION
+from app.core.metrics import MetricsMiddleware
 from app.core.middleware import (
     RateLimitMiddleware,
     AuditMiddleware,
@@ -21,7 +22,10 @@ from app.core.middleware import (
     make_db_audit_writer,
 )
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
+from app.core.logging_setup import configure_logging
+
+# 文本格式是默认值（现场人看日志）；AIMS_LOG_FORMAT=json 时输出单行 JSON，供采集器消费。
+configure_logging()
 logger = logging.getLogger("aims")
 
 # Locate the HTML prototype (works both from source and frozen EXE)
@@ -160,8 +164,8 @@ app = FastAPI(
 # ---------------------------------------------------------------------------
 # Middleware. `add_middleware` wraps the stack, so the LAST one added is the
 # OUTERMOST. Effective order, outside -> in:
-#   HTTPS enforcement -> Trusted host -> Security headers -> CORS -> Audit
-#   -> Request size limit -> application
+#   Metrics -> HTTPS enforcement -> Trusted host -> Security headers -> CORS
+#   -> Audit -> Request size limit -> application
 # ---------------------------------------------------------------------------
 _API = settings.API_V1_PREFIX
 app.add_middleware(RequestSizeLimitMiddleware, max_bytes=settings.MAX_UPLOAD_BYTES + 1024 * 1024)
@@ -209,6 +213,10 @@ if settings.allowed_host_list:
 
 if settings.https_required:
     app.add_middleware(HTTPSEnforcementMiddleware, exempt_paths=("/health",))
+
+# 指标采集放在最外层：被安全头/限流/HTTPS 直接拒绝的请求也要计入（现场排障关心
+# "哪一类请求被打回"）。见 /api/v1/system/metrics。
+app.add_middleware(MetricsMiddleware, api_prefix=_API)
 
 
 app.include_router(api_router, prefix=settings.API_V1_PREFIX)

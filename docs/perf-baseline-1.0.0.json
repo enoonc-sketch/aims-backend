@@ -79,9 +79,9 @@
     "measurements": 60000,
     "status_code": 201,
     "ok": true,
-    "elapsed_s": 4.53,
-    "rows_per_second": 13251.3,
-    "detail": ""
+    "elapsed_s": 2.38,
+    "rows_per_second": 25200.8,
+    "detail": "宽表 6 组件；优化前同一数据 4.53s / 13251 条/秒（2026-11-11 复测）"
   },
   "soak": {
     "duration_s": 90,
@@ -173,5 +173,43 @@
       }
     ],
     "verdict": "stable"
+  },
+  "optimization_1_0_0": {
+    "measured_at": "2026-11-11T13:52:00+08:00",
+    "environment": "PostgreSQL 16.15 + pgvector, 单进程 uvicorn，与其余基线同一台机器",
+    "import_before": {
+      "elapsed_s": 4.53,
+      "rows_per_second": 13251.3
+    },
+    "import_after": {
+      "elapsed_s": 2.38,
+      "rows_per_second": 25200.8,
+      "speedup": 1.9
+    },
+    "breakdown_before_ms": {
+      "parse": 10,
+      "to_orm": 1048,
+      "quality": 782,
+      "upsert": 1851,
+      "commit": 13
+    },
+    "breakdown_after_ms": {
+      "parse": 10,
+      "to_reading": 93,
+      "quality": 456,
+      "upsert": 1187,
+      "commit": 10
+    },
+    "changes": [
+      "批量导入用 Reading（__slots__）替代 ORM Measurement，60k 行构造 1048ms -> 93ms",
+      "时间列改 Series.dt.to_pydatetime() 批量转换，逐行 pd.Timestamp 的 771ms/20万行 -> 51ms",
+      "PostgreSQL 大批量写入改 execute_values 多值 INSERT + ON CONFLICT DO UPDATE（34.8k -> 50.5k 行/秒）"
+    ],
+    "latency_impact": "指标中间件带来的开销在噪声范围内：/health p95 1.2ms -> 1.5ms，吞吐 278.8 QPS 不变"
+  },
+  "observability": {
+    "structured_logging": "AIMS_LOG_FORMAT=json 输出单行 JSON（ts/level/logger/message/request_id/method/path/status/duration_ms/exc），文本格式仍为默认",
+    "metrics_endpoint": "GET /api/v1/system/metrics（仅超管），?format=prometheus 输出抓取格式",
+    "verified": "真实部署环境（PG 55432 + API 8001）实测：JSON 日志可解析、指标随请求增长、路由 ID 归一化为 {id}"
   }
 }

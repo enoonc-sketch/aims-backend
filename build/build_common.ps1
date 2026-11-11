@@ -223,6 +223,98 @@ function Install-PgVector {
 }
 
 # --------------------------------------------------------------------------- #
+# 代码签名（阶段 8/9 遗留 P0：签名自动化）
+#
+# 证书只从环境变量读，绝不写死在脚本/仓库里：
+#   AIMS_SIGN_CERT      .pfx 证书文件路径（留空 = 不签名，仅内部测试用）
+#   AIMS_SIGN_PASSWORD  证书密码（可空；有密码时才传 /p）
+#   AIMS_SIGN_TIMESTAMP 时间戳服务器（默认 http://timestamp.digicert.com）
+#   AIMS_SIGN_REQUIRED  设为 1/true/yes/on 时缺配置直接失败（发版流水线用）
+#
+# 顺序陷阱（由 tests/test_release_chain.py 锁死）：
+#   1. 主程序必须在 ISCC 打包之前签，否则安装包内是未签名 EXE；
+#   2. 安装包必须在生成 SHA256SUMS 之前签，否则签完哈希就变了。
+# --------------------------------------------------------------------------- #
+function Resolve-SignTool {
+    <# 找 signtool.exe：Windows SDK 优先，其次 Visual Studio，最后 PATH。#>
+    $candidates = @()
+    $kits = Join-Path ${env:ProgramFiles(x86)} 'Windows Kits\10\bin'
+    if (Test-Path -LiteralPath $kits) {
+        $candidates += Get-ChildItem -LiteralPath $kits -Directory -ErrorAction SilentlyContinue |
+            Sort-Object Name -Descending |
+            ForEach-Object { Join-Path $_.FullName 'x64\signtool.exe' }
+    }
+    foreach ($vs in @((Join-Path $env:ProgramFiles 'Microsoft Visual Studio'),
+                      (Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio'))) {
+        if (Test-Path -LiteralPath $vs) {
+            $candidates += Get-ChildItem -LiteralPath $vs -Recurse -Filter 'signtool.exe' -File -ErrorAction SilentlyContinue |
+                Select-Object -First 1 -ExpandProperty FullName
+        }
+    }
+    $candidates += 'signtool.exe'
+    foreach ($c in $candidates) {
+        if (-not $c) { continue }
+        $cmd = Get-Command $c -ErrorAction SilentlyContinue
+        if ($cmd) { return $cmd.Source }
+    }
+    return $null
+}
+
+function Get-SignConfig {
+    <# 读签名配置。未配置证书不是错误（内部测试允许不签名），但必须明确告警；
+       AIMS_SIGN_REQUIRED=1 时缺配置直接失败，见 Sign-AimsFile。#>
+    $cert = ($env:AIMS_SIGN_CERT ?? '').Trim()
+    $required = ($env:AIMS_SIGN_REQUIRED ?? '').Trim().ToLower() -in @('1', 'true', 'yes', 'on')
+    $timestamp = ($env:AIMS_SIGN_TIMESTAMP ?? '').Trim()
+    if (-not $timestamp) { $timestamp = 'http://timestamp.digicert.com' }
+    return [ordered]@{
+        Cert      = $cert
+        Password  = $env:AIMS_SIGN_PASSWORD
+        Timestamp = $timestamp
+        Required  = $required
+        Enabled   = ($cert -ne '' -and (Test-Path -LiteralPath $cert))
+    }
+}
+
+function Get-SignatureInfo {
+    <# 读一个文件的 Authenticode 签名状态（验签用，不签名）。#>
+    param([Parameter(Mandatory = $true)][string]$Path)
+    return Get-AuthenticodeSignature -LiteralPath $Path
+}
+
+function Sign-AimsFile {
+    <# 签一个文件并立即验签，返回 @{ Path; Signed; Signer }。
+       未配置证书时：默认只告警并返回 Signed=$false（内部测试允许）；
+       AIMS_SIGN_REQUIRED=1 时直接抛错，禁止静默发出未签名包。#>
+    param([Parameter(Mandatory = $true)][string]$Path)
+    $cfg = Get-SignConfig
+    if (-not $cfg.Enabled) {
+        if ($cfg.Required) {
+            throw "未配置代码签名证书（AIMS_SIGN_CERT），但 AIMS_SIGN_REQUIRED=1，构建中止。"
+        }
+        Write-Host "  ! 未配置代码签名，跳过签名（仅内部测试用，禁止对外发布）：$Path" -ForegroundColor Yellow
+        return [pscustomobject]@{ Path = $Path; Signed = $false; Signer = $null }
+    }
+    $signtool = Resolve-SignTool
+    if (-not $signtool) {
+        throw "找不到 signtool.exe（需安装 Windows SDK 或 Visual Studio），无法签名：$Path"
+    }
+    $signArgs = @('sign', '/fd', 'SHA256', '/f', $cfg.Cert)
+    if ($cfg.Password) { $signArgs += @('/p', $cfg.Password) }
+    $signArgs += @('/tr', $cfg.Timestamp, '/td', 'SHA256', '/v', $Path)
+    Invoke-Checked -Exe $signtool -Arguments $signArgs -What "签名 $Path"
+    # 签名后必须验签，否则"签名失败"会被当成成功。
+    & $signtool 'verify', '/pa', '/v', $Path
+    if ($LASTEXITCODE -ne 0) { throw "验签失败：$Path" }
+    $info = Get-SignatureInfo -Path $Path
+    if ($info.Status -ne 'Valid') { throw "验签失败（状态 $($info.Status)）：$Path" }
+    $signer = $null
+    if ($info.SignerCertificate) { $signer = $info.SignerCertificate.Subject }
+    Write-Host "  已签名：$Path（$signer）" -ForegroundColor Green
+    return [pscustomobject]@{ Path = $Path; Signed = $true; Signer = $signer }
+}
+
+# --------------------------------------------------------------------------- #
 function Build-Launcher {
     <# AIMS.exe：托盘启动器（onedir，启动快，便于替换单个 DLL） #>
     param([string]$Python, [string]$OutDir, [string]$Version)

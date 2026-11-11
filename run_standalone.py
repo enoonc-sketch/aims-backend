@@ -189,26 +189,63 @@ def _attach_debug_console() -> None:
         pass
 
 
-def _pause(msg: str = "Press Enter to exit...") -> None:
+def _redirect_missing_streams() -> None:
+    """GUI 子系统 EXE（console=False）下 sys.stdin/stdout/stderr 全是 None。
+
+    这不是摆设：uvicorn 的 ColourizedFormatter 在 configure_logging() 里调
+    `sys.stdout.isatty()`，None 没有这个方法，`config.load()` 直接抛 ValueError，
+    服务线程还没起就死了；threading 的异常钩子往 None 的 stderr 写也被吞掉，
+    用户最后只看到一个"Press Enter to exit..."的空弹窗——1.0.0 正式版就是
+    这样在真机上启动即崩溃的。这是 PyInstaller 官方文档记载的 windowed 模式
+    陷阱，标准做法就是启动第一时间把缺失的流接到空设备（`logging` 的文件
+    handler 与 aims_crash.log 不受影响，诊断信息仍在）。
+
+    已有真控制台（源码运行 / 调试模式 / 从 cmd 启动）时不动；流存在时不动。
+    """
+    if _has_console():
+        return
+    for name, mode in (("stdin", "r"), ("stdout", "w"), ("stderr", "w")):
+        try:
+            if getattr(sys, name, None) is None:
+                setattr(sys, name, open(os.devnull, mode, encoding="utf-8", errors="replace"))
+        except Exception:
+            pass
+
+
+def _pause_dialog_text(detail: str = "") -> str:
+    """GUI 弹窗里显示的文本：必须是真正的报错原因 + 崩溃日志位置。
+
+    绝不能只是等回车的提示——1.0.0 的弹窗只显示 "Press Enter to exit..."，
+    用户完全不知道发生了什么、日志在哪，排障无从下手。
+    """
+    body = detail.strip() or "AIMS Backend 启动失败。"
+    return body + "\n\n按确定退出。"
+
+
+def _pause(detail: str = "") -> None:
     """启动失败时停住进程让用户读到原因——但绝不能为此弹 CMD 窗口。
 
     * 有控制台（源码运行 / 调试模式 / 从 cmd 启动）：按回车退出；
     * GUI 子系统 EXE（正式用户路径）：用 Windows 原生 MessageBox 弹窗，
       点确定退出。原来的 `os.system("pause")` 会瞬间拉起一个 cmd.exe
       窗口，在 GUI 模式下正是"莫名其妙闪出黑框"的来源之一。
+
+    `detail` 是真正的报错原因（含崩溃日志路径），调用点必须传；不传时
+    弹窗只会显示一句"启动失败"，和 1.0.0 的空弹窗一样没用。
     """
     if os.name == "nt" and not _has_console():
         try:
             import ctypes
 
             MB_OK, MB_ICONERROR = 0x0, 0x10
-            ctypes.windll.user32.MessageBoxW(None, msg, "AIMS Backend", MB_OK | MB_ICONERROR)
+            ctypes.windll.user32.MessageBoxW(
+                None, _pause_dialog_text(detail), "AIMS Backend", MB_OK | MB_ICONERROR)
             return
         except Exception:
             pass
     try:
         if sys.stdin and sys.stdin.isatty():
-            input(msg)
+            input("Press Enter to exit...")
         else:
             import time
             time.sleep(30)
@@ -536,6 +573,9 @@ def main() -> int:
     # 让部署/启动阶段的 print 与 traceback 恢复可见；普通用户路径不设该变量。
     if getattr(sys, "frozen", False):
         _attach_debug_console()
+    # 没有控制台时（GUI 子系统 EXE）标准流全是 None：uvicorn 配日志时调
+    # sys.stdout.isatty() 会直接炸掉服务线程。先接到空设备，再干别的。
+    _redirect_missing_streams()
     base = _base_dir()
 
     # `AIMS-Backend.exe deploy <cmd>` — installer / operations CLI. Handled before
@@ -653,7 +693,7 @@ def main() -> int:
                 return 0
             print(f"Port {port} is already used by another service. Set PORT in .env (or free the port) and start again.")
             if getattr(sys, "frozen", False):
-                _pause()
+                _pause(f"端口 {port} 已被其他程序占用，AIMS 无法启动。\n请关闭占用该端口的程序，或在 .env 里改 PORT 再启动。")
             return 1
 
         _hold_app_mutex()  # lets the installer detect a running AIMS (after the single-instance check)
@@ -686,7 +726,21 @@ def main() -> int:
         # thread for its GUI loop. When the main thread ends (window closed),
         # the process exits and the daemon thread dies with it.
         # (Same pattern as the sing-box generator, app.py:279.)
-        server_thread = threading.Thread(target=server.run, daemon=True)
+        #
+        # 线程里的异常不会冒到主线程：threading 的异常钩子往 stderr 写，而 GUI
+        # 子系统下 stderr 是 None，异常会被悄悄吞掉。包一层把它记下来，启动
+        # 失败时才能在弹窗里告诉用户真正的原因（1.0.0 的 uvicorn 日志配置
+        # 崩溃就是这样丢的：config.load() 里 ColourizedFormatter 调
+        # sys.stdout.isatty()，None 没有这个方法）。
+        _server_error: list[BaseException] = []
+
+        def _run_server_guarded() -> None:
+            try:
+                server.run()
+            except BaseException as exc:  # noqa: BLE001 — 记下来给 not-healthy 分支用
+                _server_error.append(exc)
+
+        server_thread = threading.Thread(target=_run_server_guarded, daemon=True)
         server_thread.start()
         _watch_parent(server)
 
@@ -704,15 +758,28 @@ def main() -> int:
                 break
             time.sleep(0.15)
         if not healthy:
-            if not server_thread.is_alive():
+            # 1.0.0 以前这里不写崩溃日志、弹窗也不带原因，用户只能看到
+            # "Press Enter to exit..."。现在：线程里记下的异常写进崩溃日志，
+            # 弹窗显示真正的原因 + 日志路径。
+            detail = ""
+            if _server_error:
+                exc = _server_error[0]
+                log_path = _write_crash_log(base, exc)
+                detail = f"服务启动失败：{exc}\n\n崩溃日志：{log_path}"
+                print(f"The server thread died at startup: {exc!r} (crash log: {log_path})")
+            elif not server_thread.is_alive():
                 print(f"The server stopped right after starting. Most likely port {port} is already in use "
                       "by another program: set PORT in .env or free the port. See the messages above.")
+                detail = (f"服务启动后立即退出。最可能的原因是端口 {port} 已被其他程序占用："
+                          f"请关闭占用该端口的程序，或在 .env 里改 PORT 再启动。")
             else:
                 print("Server did not become ready in 15 s.")
                 print(f"If it actually started, open manually: {base_url}/ui")
+                detail = ("服务 15 秒内没有就绪。\n"
+                          f"如果它其实已经起来了，直接打开：{base_url}/ui")
             server.should_exit = True
             if getattr(sys, "frozen", False):
-                _pause()  # keep the console open so a double-click user can read the message
+                _pause(detail)
             return 1
 
         opened_window = False
@@ -757,7 +824,10 @@ def main() -> int:
         print("  python -m app.cli gen-secret")
         print("Or run the one-step setup wizard (key + HTTPS cert + first admin):")
         print("  python run_standalone.py setup")
-        _pause()
+        log_path = _write_crash_log(base, exc)
+        _pause(f"配置错误，AIMS 拒绝启动：\n{exc}\n\n崩溃日志：{log_path}\n"
+                "可用环境变量或 .env 文件提供配置（见 .env.example），或运行：\n"
+                "  python run_standalone.py setup")
         return 2
     except Exception as exc:
         print("\n" + "!" * 60)
@@ -773,7 +843,7 @@ def main() -> int:
         print("  3. Run from cmd:  AIMS-Backend.exe")
         print("  4. Re-build with build_exe.bat")
         print("!" * 60)
-        _pause()
+        _pause(f"启动失败：{exc}\n\n崩溃日志：{log_path}")
         return 1
 
 
@@ -783,9 +853,10 @@ if __name__ == "__main__":
     except Exception:
         traceback.print_exc()
         try:
-            _write_crash_log(_base_dir(), Exception("top-level"))
+            log_path = _write_crash_log(_base_dir(), Exception("top-level"))
         except Exception:
-            pass
-        _pause()
+            log_path = None
+        _pause("启动失败（顶层异常）。"
+               + (f"\n\n崩溃日志：{log_path}" if log_path else ""))
         code = 1
     sys.exit(code)

@@ -102,8 +102,12 @@ if ($LASTEXITCODE -ne 0) { Write-Host "  ! 单元测试未全部通过，请先�
 
 # --------------------------------------------------------------------------- #
 Write-Step "7/8 编译安装程序（Inno Setup）"
+# 签名顺序陷阱 1：主程序必须在 ISCC 打包之前签，否则安装包内是未签名 EXE。
+$signBackend = Sign-AimsFile -Path $backendExe
 $setup = Build-Installer -Version $version -Arch x64
 Write-Host "  产物：$setup" -ForegroundColor Green
+# 安装包本身也要签（哈希在 8/8 报告里重新算，不会失真）。
+$signSetup = Sign-AimsFile -Path $setup
 
 # --------------------------------------------------------------------------- #
 Write-Step "8/8 构建报告"
@@ -121,6 +125,12 @@ $report = [ordered]@{
     backend_size_mb    = Get-PackageSizeMB -Path (Join-Path $script:DistDir 'backend')
     llama_cpp          = -not $SkipAi
     sha256             = (Get-FileHash -LiteralPath $setup -Algorithm SHA256).Hash.ToLower()
+    code_signing       = [ordered]@{
+        backend_signed   = $signBackend.Signed
+        installer_signed = $signSetup.Signed
+        backend_signer   = $signBackend.Signer
+        installer_signer = $signSetup.Signer
+    }
 }
 New-Item -ItemType Directory -Path $script:BuildDir -Force | Out-Null
 $reportPath = Join-Path $script:BuildDir "build-report-x64.json"

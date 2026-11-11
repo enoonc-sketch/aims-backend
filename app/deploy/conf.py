@@ -182,6 +182,11 @@ def build_env(layout: Layout, state: dict, secrets: dict, *, port: int, api_port
         "AIMS_PG_PORT": str(port),
         "AIMS_BACKUP_KEEP": "14",
         "AIMS_BACKUP_DIR": str(layout.backups_dir),
+
+        # 日志（1.0.0）：text 是给人看的默认格式；改成 json 即为单行 JSON，
+        # 便于 logstash/loki 等采集器直接消费。日志级别同理。
+        "AIMS_LOG_FORMAT": "text",
+        "AIMS_LOG_LEVEL": "INFO",
     }
     return values
 

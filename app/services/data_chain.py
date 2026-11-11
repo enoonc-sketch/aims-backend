@@ -251,6 +251,44 @@ def evaluate_alarm_rules(db: Session, device: Device, component_name: str, value
     return out.alarms
 
 
+# 超过这个行数走 PostgreSQL 的 execute_values（多值 INSERT），否则用 SQLAlchemy 的
+# executemany。单条/小批（实时上报）保持原路径，语义与以前完全一致。
+_PG_EXECUTE_VALUES_THRESHOLD = 2_000
+
+
+def _pg_upsert_execute_values(db: Session, rows: list) -> None:
+    """PostgreSQL 批量 upsert：一条多值 INSERT，比逐行 executemany 快数倍。
+
+    executemany 在 psycopg2 下是"每行一次 Execute"的协议往返（60k 行实测 1.85 s，
+    约 31 µs/行）；execute_values 把 1000 行拼成一条语句（多值 VALUES），
+    往返次数降到 1/1000。冲突语义、目标列与 SQLAlchemy 版本完全一致：
+    以 (time, device_id, component_name) 为主键做 DO UPDATE。
+
+    刻意不用 COPY：COPY 无法携带 ON CONFLICT，只能先灌临时表再 INSERT ... SELECT，
+    对 1 万行量级来说收益不如复杂度大；这里优先"简单且能对得上账"。
+
+    直接拿 DBAPI 游标执行，事务仍由 Session 管理（不 commit），所以外部同步等
+    调用方依赖的"中途失败整体回滚"不受影响。
+    """
+    from psycopg2.extras import execute_values
+
+    table = Measurement.__table__
+    cols = ("time", "device_id", "component_name", "value", "quality", "import_id")
+    sql = (
+        f"INSERT INTO {table.name} ({', '.join(cols)}) VALUES %s "
+        "ON CONFLICT (time, device_id, component_name) DO UPDATE SET "
+        "value = EXCLUDED.value, quality = EXCLUDED.quality, import_id = EXCLUDED.import_id"
+    )
+    payload = [(r.time, r.device_id, r.component_name, r.value, r.quality, r.import_id) for r in rows]
+    # 先把 session 里待写的对象刷出去，避免 DBAPI 游标绕过 ORM 时丢写
+    db.flush()
+    cur = db.connection().connection.cursor()
+    try:
+        execute_values(cur, sql, payload, page_size=1000)
+    finally:
+        cur.close()
+
+
 def _bulk_upsert_measurements(db: Session, rows: list[Measurement], chunk: int = 5_000) -> None:
     """写入读数；主键冲突时更新，而不是抛 IntegrityError。
 
@@ -281,6 +319,12 @@ def _bulk_upsert_measurements(db: Session, rows: list[Measurement], chunk: int =
 
     for i in range(0, len(rows), chunk):
         part = rows[i:i + chunk]
+        if dialect == "postgresql" and len(part) >= _PG_EXECUTE_VALUES_THRESHOLD:
+            try:
+                _pg_upsert_execute_values(db, part)
+                continue
+            except ImportError:  # pragma: no cover - psycopg2 是硬依赖，防御性回退
+                logger.warning("psycopg2.extras 不可用，回退到 executemany 写入")
         if dialect in ("postgresql", "sqlite"):
             if dialect == "postgresql":
                 from sqlalchemy.dialects.postgresql import insert as dialect_insert

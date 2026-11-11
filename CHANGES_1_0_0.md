@@ -166,9 +166,83 @@
 - 实跑：`deploy provision` 8.5 s / 57 表；`doctor` 正常；`selftest` **34/34**；
   备份→删 6 万行→恢复 **390952 条完全一致**；90 s soak **0 错误、RSS 持平**
 
+## 品牌更新：全站 LOGO 更换（后续变更）
+
+1. `assets/aims-logo.png`：替换为新版 AIMS 标志（A + 轨道 + 柱状图 + AiMS 字样，
+   透明底，边界洪泛去白底、无截图伪影）
+2. `assets/aims-icon-512.png`：取标志上部图形（A + 轨道 + 柱状图）方形化重制
+3. `assets/aims.ico`：由新图形重新生成 16–256 px 共 7 档尺寸，EXE / 托盘 /
+   快捷方式 / 安装器 / 浏览器标签页图标全部随之更新（引用路径不变，无需改代码）
+4. `frontend.html`：侧边栏顶部文字 LOGO（"AIMS" 标题 + 副标题）替换为内嵌
+   PNG 图片 LOGO（白底展示区，data URI 内嵌，单文件部署不受影响）
+5. 回归：`tests/test_release_chain.py` 15/15 通过
+
+## 后续补强：可观测性 / 导入吞吐 / 签名自动化（2026-11-11）
+
+对应阶段 8-9 交付报告"下一阶段任务"里的 P0（签名自动化）与 P2（导入吞吐、结构化日志与指标）。
+
+1. **结构化日志**（`app/core/logging_setup.py`）：`AIMS_LOG_FORMAT=json` 时每条日志一行
+   JSON（`ts/level/logger/message` + 请求上下文 `request_id/method/path/status/duration_ms`），
+   异常进 `exc` 字段；默认仍是文本格式，现场不需要改习惯。请求上下文用 contextvar，
+   并发请求不串台，日志被异步 handler 延迟格式化也不丢字段。
+2. **运行指标**（`app/core/metrics.py` + `GET /api/v1/system/metrics`，仅超管）：
+   请求总数/状态类/方法/路由、延迟直方图（p50/p90/p95/p99）、并发数、进程 RSS 与线程数；
+   `?format=prometheus` 直接输出抓取格式。路由标签把 ID 归一化成 `{id}`，避免标签基数爆炸。
+   5xx 记 ERROR、≥3 s 记 WARNING，都带 `request_id`——现场排障靠它把一张报错截图串到日志。
+3. **导入吞吐**（2.1 万 → 4.5 万条读数的同一份文件）：
+   - 批量导入改用 `Reading`（`__slots__`）替代 ORM 实例，60k 行构造 1048 → 93 ms
+   - 时间列批量 `dt.to_pydatetime()`，替代逐行 `pd.Timestamp(...).replace(tzinfo=...)`
+   - PostgreSQL 大批量写入改 `execute_values` 多值 INSERT + `ON CONFLICT DO UPDATE`
+   - 端到端 13251 → 25201 条/秒（HTTP，含解析），幂等语义不变（重导仍不增行）
+4. **代码签名自动化**：`Sign-AimsFile` / `Resolve-SignTool` / `Get-SignConfig`，
+   环境变量 `AIMS_SIGN_CERT` / `AIMS_SIGN_PASSWORD` / `AIMS_SIGN_TIMESTAMP` / `AIMS_SIGN_REQUIRED`；
+   顺序（主程序 → 安装包 → 校验和）由 `tests/test_release_chain.py` 锁死；未签名时显式告警并
+   在 `release-manifest.json` 记 `code_signing.signed=false`。
+5. **测试**：新增 `tests/test_observability.py`（20）、`test_release_chain.py` +4；全量 **583 passed / 2 skipped**。
+
 
 ---
 
-## 合版说明（2026-11-11，对照已发布 0.6.0 核实）
+## 合版说明（2026-11-11，对照已发布 1.0.0 核实）
 
-1.0.0 底包基于 0.6.0 之前的桌面版源码，合版时从已发布 0.6.0 恢复了：NO_PROXY 修复及回归测试（`ai_cores._http_client` 的 trust_env=False 回退，1.0.0 新增的模型生命周期代码原样保留）、CHANGES_0_5_4/0_5_5 合并版、丢失的 CHANGES_0_5_10.md 与 CHANGES_0_6_0.md、加固版 build-exe 工作流（ISCC 路径回退 + exit code 检查，示例标签改到 v1.0.0）、修好的 AIMS-Backend.iss（GUID 花括号 bug + 已发布 AppId，版本号改到 1.0.0）、bat 的 webview hidden-import、lock 的 pefile/pywin32-ctypes；LICENSES.txt 版本改到 1.0.0。1.0.0 自己的改动全部保留：spec 的 psycopg2/pgvector 排除修复与 console=False、AIMS.iss 的降级防护与备份快捷方式修复、全部 .ps1 与 AIMS.iss 的 UTF-8 BOM、PyJWT 迁移、安全整改与模板中心认证。工作流文件（build-exe.yml、build-installer.yml）不能用 push-files 推，须在网页上改。
+本包（品牌更新 + 可观测性/导入吞吐/签名自动化）底包基于 1.0.0 之前的桌面版源码，
+合版时从已发布 1.0.0 恢复了：NO_PROXY 修复及回归测试、CHANGES_0_5_4/0_5_5 合并版、
+丢失的 CHANGES_0_5_10.md 与 CHANGES_0_6_0.md、加固版 build-exe 工作流（示例标签改到
+v1.0.0）、修好的 AIMS-Backend.iss（GUID 花括号 bug + 已发布 AppId，版本号 1.0.0）、
+bat 的 webview hidden-import、lock 的 pefile/pywin32-ctypes、LICENSES.txt 版本、
+build/ 目录（5 个 .ps1；本包缺失，build-installer.yml 与签名测试都要用它）。
+本包自己的改动全部保留：新 LOGO（3 个图标 + frontend.html 内嵌 PNG）、结构化日志、
+运行指标、导入吞吐、签名自动化。另修：run_standalone.py 的 GUI 无控制台启动崩溃
+（见“启动崩溃修复”一节）。工作流文件不能用 push-files 推，须在网页上改。
+
+---
+
+## 启动崩溃修复（2026-11-11，1.0.0 正式版真机启动即崩溃）
+
+现象：安装 1.0.0 后双击启动，只弹出一个标题 "AIMS Backend"、内容只有
+"Press Enter to exit..." 的报错框，没有任何原因，点确定后进程退出。
+
+根因（两层）：
+
+1. 1.0.0 把 `build_exe.spec` 改成 `console=False`（GUI 子系统）后，Windows
+   下 `sys.stdin/stdout/stderr` 全是 `None`。uvicorn 的 ColourizedFormatter
+   在 `configure_logging()` 里调 `sys.stdout.isatty()`，`None` 没有这个方法，
+   `config.load()` 直接抛 `ValueError: Unable to configure formatter 'default'`，
+   服务线程还没起就死了（0.6.0 的 `console=True` 下流存在，所以没暴露）。
+2. `run_standalone.py` 的 `_pause()` 把等回车的提示语当作弹窗文本显示，
+   真正的报错只印到没有控制台的 stdout（看不见），"未就绪"与"配置错误"
+   两条路径甚至不写崩溃日志。
+
+修复（`run_standalone.py`）：
+
+- 启动第一时间 `_redirect_missing_streams()`：没有控制台时把缺失的三个流
+  接到空设备（PyInstaller 官方文档推荐的做法）；调试模式已挂上真控制台时不动。
+  接完后 `sys.stdout.isatty()` 返回 False，uvicorn 日志配置正常通过。
+- `_pause(detail)`：弹窗显示真正的报错原因 + 崩溃日志路径，不再显示提示语；
+  所有调用点都必须传原因（测试用 AST 锁死，不带原因的调用即失败）。
+- 服务线程包一层记异常：启动失败时弹窗能说出线程里真正的异常；
+  "未就绪"与"配置错误"路径也写崩溃日志。
+
+回归：`tests/test_no_console_window.py` 新增 4 项（流重定向、流全是 None 时
+`uvicorn.Config.load()` 成功、弹窗文本含真正原因、所有 `_pause()` 调用都带原因），
+Linux 上模拟 windowed 环境即可复现与验证，无需 Windows 真机。

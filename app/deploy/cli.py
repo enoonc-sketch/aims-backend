@@ -42,12 +42,22 @@ EXIT_UNEXPECTED = 9
 
 # --------------------------------------------------------------------------- #
 def _setup_logging(log_file: Path) -> None:
+    """deploy 子命令的日志：默认文本（现场直接看），AIMS_LOG_FORMAT=json 时用 JSON。
+
+    与控制台/后端共用同一个 formatter，运维排查时两种日志的字段一致。
+    """
+    import os as _os
+
+    from app.core.logging_setup import JsonFormatter
+
     log_file.parent.mkdir(parents=True, exist_ok=True)
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-        handlers=[logging.StreamHandler(sys.stdout), logging.FileHandler(log_file, encoding="utf-8")],
-    )
+    use_json = _os.environ.get("AIMS_LOG_FORMAT", "text").lower() == "json"
+    fmt = JsonFormatter() if use_json else logging.Formatter(
+        "%(asctime)s [%(levelname)s] %(name)s: %(message)s")
+    handlers = [logging.StreamHandler(sys.stdout), logging.FileHandler(log_file, encoding="utf-8")]
+    for h in handlers:
+        h.setFormatter(fmt)
+    logging.basicConfig(level=logging.INFO, handlers=handlers, force=True)
 
 
 def _app_running(port: int = 8000) -> bool:

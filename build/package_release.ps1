@@ -57,9 +57,16 @@ New-Item -ItemType Directory -Path $OutDir -Force | Out-Null
 
 # ---- 安装包 ----
 Copy-Item -LiteralPath $Installer -Destination $OutDir -Force
+$installerCopy = Join-Path $OutDir ([System.IO.Path]::GetFileName($Installer))
 if ($Arm64Installer) {
     if (-not (Test-Path -LiteralPath $Arm64Installer)) { throw "ARM64 安装包不存在：$Arm64Installer" }
     Copy-Item -LiteralPath $Arm64Installer -Destination $OutDir -Force
+}
+
+# ---- 代码签名（顺序陷阱 2：安装包必须在生成 SHA256SUMS 之前签，否则签完哈希失真）----
+$signResult = Sign-AimsFile -Path $installerCopy
+if (-not $signResult.Signed) {
+    Write-Host "  ! 本次发行包未签名（未配置代码签名证书，见 AIMS_SIGN_CERT）。仅用于内部测试，禁止对外发布。" -ForegroundColor Yellow
 }
 
 # ---- 文档与脚本 ----
@@ -103,8 +110,13 @@ $manifest = [ordered]@{
     built_at = (Get-Date).ToString('s')
     installer = @{
         file = [System.IO.Path]::GetFileName($Installer)
-        size_mb = [math]::Round((Get-Item -LiteralPath $Installer).Length / 1MB, 1)
-        sha256 = (Get-FileHash -LiteralPath $Installer -Algorithm SHA256).Hash.ToLower()
+        size_mb = [math]::Round((Get-Item -LiteralPath $installerCopy).Length / 1MB, 1)
+        # 注意：哈希取签名后的交付件（$installerCopy），不是签名前原文件。
+        sha256 = (Get-FileHash -LiteralPath $installerCopy -Algorithm SHA256).Hash.ToLower()
+    }
+    code_signing = [ordered]@{
+        signed = $signResult.Signed
+        signer = $signResult.Signer
     }
     arm64_installer = if ($Arm64Installer) {
         @{
