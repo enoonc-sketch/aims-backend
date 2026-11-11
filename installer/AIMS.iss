@@ -16,7 +16,7 @@
 ;  * 覆盖升级前自动做数据库备份 + 保留旧程序副本（rollback\<版本>），
 ;    升级后自检不通过时自动回滚，回到安装前的状态。
 ;
-;  编译：ISCC.exe /DAppVersion=1.0.2 installer\AIMS.iss
+;  编译：ISCC.exe /DAppVersion=1.0.3 installer\AIMS.iss
 ;       （build_x64.ps1 会自动调用，并把 dist 里的产物摆好）
 ; ============================================================================
 
@@ -24,7 +24,7 @@
 #define MyAppShortName "AIMS"
 #define MyAppPublisher "AIMS"
 #ifndef AppVersion
-  #define AppVersion "1.0.2"
+  #define AppVersion "1.0.3"
 #endif
 #ifndef BuildArch
   #define BuildArch "x64"
@@ -127,6 +127,7 @@ Name: "{group}\AIMS"; Filename: "{app}\{#LauncherExe}"; WorkingDir: "{app}"; Ico
 Name: "{group}\AIMS 调试模式（控制台）"; Filename: "{app}\{#LauncherExe}"; Parameters: "--debug-console"; WorkingDir: "{app}"; IconFilename: "{app}\assets\aims.ico"
 Name: "{group}\AIMS 诊断报告"; Filename: "{app}\{#LauncherExe}"; Parameters: "--diagnose"; WorkingDir: "{app}"; IconFilename: "{app}\assets\aims.ico"
 Name: "{group}\AIMS 数据目录"; Filename: "{commonappdata}\AIMS"
+Name: "{group}\AIMS 首次登录凭据"; Filename: "{sys}\notepad.exe"; Parameters: """{commonappdata}\AIMS\Config\first-login.txt"""; Comment: "查看管理员初始密码（修改密码后可删除该文件）"
 ; 备份脚本经由隐藏窗口的 PowerShell 执行（直接指向 .ps1 会弹蓝色控制台窗口）
 Name: "{group}\AIMS 备份与恢复"; Filename: "{sys}\wscript.exe"; Parameters: """{app}\tools\run-hidden.vbs"" backup.ps1 -Notify"; WorkingDir: "{app}\tools"; IconFilename: "{app}\assets\aims.ico"; Comment: "立即备份数据库与配置到数据目录 Backup\"
 Name: "{group}\卸载 AIMS"; Filename: "{uninstallexe}"
@@ -142,6 +143,9 @@ Filename: "{app}\{#BackendExe}"; Parameters: "deploy --root ""{app}"" provision 
 Filename: "{app}\{#BackendExe}"; Parameters: "deploy --root ""{app}"" doctor --api-port {code:GetApiPort} --json ""{commonappdata}\AIMS\Logs\post-install-doctor.json"""; Flags: runhidden waituntilterminated; StatusMsg: "正在执行安装后健康检查……"
 ; 4) 启动（以登录用户身份，避免数据文件变成管理员所有）
 Filename: "{app}\{#LauncherExe}"; Description: "立即启动 AIMS"; Flags: nowait postinstall skipifsilent runasoriginaluser
+; 5) 首次安装会随机生成管理员初始密码（不设 admin/admin 之类的默认口令），
+;    让用户在完成页直接打开凭据文件抄下密码
+Filename: "{sys}\notepad.exe"; Parameters: """{commonappdata}\AIMS\Config\first-login.txt"""; Description: "查看首次登录凭据（用户名与初始密码，务必记下）"; Flags: postinstall skipifsilent runasoriginaluser skipifdoesntexist
 
 [UninstallRun]
 ; 停后端 → 停/注销数据库服务 → 清理计划任务；数据目录不动

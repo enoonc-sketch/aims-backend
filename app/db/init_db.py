@@ -178,6 +178,12 @@ def _seed_roles(db: Session) -> None:
 _ensure_roles = _seed_roles
 
 
+# 最近一次 init_db() 是否创建了首个管理员（bootstrap/dev）。provision 用它决定
+# 是否把「首次登录凭据」写给用户——只有真的新建了账号才值得写，避免把改过
+# 密码的旧凭据再次落盘误导用户。
+BOOTSTRAP_ADMIN_CREATED = False
+
+
 def _bootstrap_admin(db: Session) -> None:
     """Create the FIRST administrator, only if the users table is empty AND the
     credentials were injected from outside (BOOTSTRAP_ADMIN_USERNAME / _PASSWORD).
@@ -220,6 +226,8 @@ def _bootstrap_admin(db: Session) -> None:
     if role is not None:
         db.add(UserRole(user_id=admin.id, role_id=role.id))
     db.commit()
+    global BOOTSTRAP_ADMIN_CREATED
+    BOOTSTRAP_ADMIN_CREATED = True
     if dev_admin:
         logger.warning("DEVELOPMENT administrator %r created with the default dev password. "
                        "Never expose this instance; production refuses this account.", username)

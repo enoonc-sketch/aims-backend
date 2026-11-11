@@ -1,6 +1,6 @@
 # AIMS Backend — Industrial Analyzer Smart O&M Platform
 
-> **Windows 离线安装版（1.0.2，基准 0.5.9）**
+> **Windows 离线安装版（1.0.3，基准 0.5.9）**
 >
 > 本仓库现在同时是「Windows 桌面独立软件」的源码：单文件安装包、零外部依赖、
 > 内置 PostgreSQL 16 + pgvector + 本地 AI 引擎、桌面托盘启动器、一键备份/恢复、
@@ -21,13 +21,13 @@
 >
 > ```powershell
 > cd build; .\build_x64.ps1          # 依赖 → 内置PG → 打包 → 冒烟 → 出安装包
-> .\package_release.ps1 -Installer ..\installer_output\AIMS-1.0.2-x64-Setup.exe
+> .\package_release.ps1 -Installer ..\installer_output\AIMS-1.0.3-x64-Setup.exe
 > ```
 >
 > 快速上手（目标机，无需任何开发环境）：
 >
 > ```
-> 双击 AIMS-1.0.2-x64-Setup.exe → 桌面 AIMS 图标 → 托盘菜单
+> 双击 AIMS-1.0.3-x64-Setup.exe → 桌面 AIMS 图标 → 托盘菜单
 > 运维：C:\Program Files\AIMS\tools\*.ps1（备份/恢复/诊断/卸载）
 > 验收：tools\Windows-Acceptance.ps1 -Setup <安装包>
 > ```

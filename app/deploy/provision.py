@@ -222,12 +222,23 @@ def provision(*, root: Path | None = None, mode: str = "auto", pg_port: int | No
         for warn in schema_report["warnings"][:8]:
             say(f"    ! {warn}")
 
-        from app.db.init_db import init_db as seed_db
+        from app.db.init_db import init_db as seed_db, BOOTSTRAP_ADMIN_CREATED
 
         seed_db(seed=seed)
         step("seed", demo_data=seed)
     finally:
         engine.dispose()
+
+    # 6b ---- 首次登录凭据 ----------------------------------------------------
+    # 首个管理员是 provision 随机生成口令创建的（secrets.json 里的 JSON 人读不了），
+    # 必须同步给用户一份可读凭据，否则用户只能拿 admin/admin 反复试错。
+    if BOOTSTRAP_ADMIN_CREATED:
+        creds_file = conf.write_first_login_credentials(
+            layout, username=admin_username, password=secrets["ADMIN_PASSWORD"],
+            api_port=api_port)
+        report["admin_credentials_file"] = str(creds_file)
+        say(f"  [admin] 首次登录凭据已写入：{creds_file}")
+        say("          （用户名与初始密码见该文件；首次登录后请立即修改密码）")
 
     # 7 ---- AI engine -------------------------------------------------------
     # 内置模型随安装包放在只读的程序目录；先落到可写模型目录，再做登记，

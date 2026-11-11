@@ -1,7 +1,9 @@
 __pycache__/
 *.pyc
 .pytest_cache/
-build/
+# build/ 目录存放发布构建脚本（build_*.ps1 / package_release.ps1），必须进版本库：
+# 此前整目录被忽略，导致 git archive 导出的源码包丢失打包链路、
+# test_release_chain 在干净检出上直接 FileNotFoundError。
 dist/
 installer_output/
 *.egg-info/

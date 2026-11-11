@@ -126,6 +126,120 @@ function Assert-FileHash {
     return $actual
 }
 
+function Resolve-SignTool {
+    <#
+      定位 signtool.exe：优先 PATH，其次 Windows SDK 各版本（取最高版本）。
+      找不到返回 $null，由调用方决定是报错还是跳过。
+    #>
+    $cmd = Get-Command 'signtool.exe' -ErrorAction SilentlyContinue
+    if ($cmd) { return $cmd.Source }
+    $roots = @(
+        (Join-Path ${env:ProgramFiles(x86)} 'Windows Kits\10\bin'),
+        (Join-Path $env:ProgramFiles 'Windows Kits\10\bin')
+    ) | Where-Object { $_ -and (Test-Path -LiteralPath $_) }
+    foreach ($root in $roots) {
+        $found = Get-ChildItem -LiteralPath $root -Directory -ErrorAction SilentlyContinue |
+            Where-Object { $_.Name -match '^\d+\.' } |
+            Sort-Object { [version]($_.Name -replace '[^\d\.].*$', '') } -Descending |
+            ForEach-Object { Join-Path $_.FullName 'x64\signtool.exe' } |
+            Where-Object { Test-Path -LiteralPath $_ } |
+            Select-Object -First 1
+        if ($found) { return $found }
+    }
+    return $null
+}
+
+function Get-SignConfig {
+    <#
+      代码签名配置从环境变量读取（证书不进仓库，也不进构建脚本）：
+
+        AIMS_SIGN_CERT       PFX 证书路径，或证书指纹（SHA-1 thumbprint）
+        AIMS_SIGN_PASSWORD   PFX 密码（用指纹时可省略）
+        AIMS_SIGN_TIMESTAMP  RFC3161 时间戳服务器，默认 DigiCert
+        AIMS_SIGN_REQUIRED   1/true 时，配置缺失即中止构建（正式发版应在 CI 里打开）
+
+      未配置且未要求时返回 $null —— 构建继续，但会显式打印"产物未签名"，
+      绝不假装已签名。
+    #>
+    $cert = $env:AIMS_SIGN_CERT
+    if (-not $cert) { return $null }
+    $ts = $env:AIMS_SIGN_TIMESTAMP
+    if (-not $ts) { $ts = 'http://timestamp.digicert.com' }
+    $required = $env:AIMS_SIGN_REQUIRED -match '^(1|true|yes|on)$'
+    return [pscustomobject]@{
+        Cert     = $cert
+        Password = $env:AIMS_SIGN_PASSWORD
+        Timestamp = $ts
+        Required = $required
+        IsPfx    = ($cert -match '\.pfx$')
+    }
+}
+
+function Sign-AimsFile {
+    <#
+      给一个 exe/msi 签名并用 signtool verify 复核。
+
+      签名必须在生成 SHA256SUMS 之前完成：签完再改文件（哪怕是改 PE 头）签名立即失效，
+      校验和也会对不上——这是发布环节最常见的事故顺序错误。
+    #>
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [switch]$Required
+    )
+    if (-not (Test-Path -LiteralPath $Path)) { throw "待签名文件不存在：$Path" }
+
+    $cfg = Get-SignConfig
+    if (-not $cfg) {
+        if ($Required -or ($env:AIMS_SIGN_REQUIRED -match '^(1|true|yes|on)$')) {
+            throw ("要求代码签名但未配置 AIMS_SIGN_CERT。请设置 AIMS_SIGN_CERT（PFX 路径或证书指纹）" +
+                   "与 AIMS_SIGN_PASSWORD 后重试；不接受「未签名但对外发布」。")
+        }
+        Write-Host "  ! 未配置代码签名：$([System.IO.Path]::GetFileName($Path)) 未签名" -ForegroundColor Yellow
+        return $false
+    }
+
+    $signtool = Resolve-SignTool
+    if (-not $signtool) {
+        throw "已配置 AIMS_SIGN_CERT，但找不到 signtool.exe。请安装 Windows SDK（含 Signing Tools）。"
+    }
+
+    $signArgs = @('sign', '/fd', 'sha256', '/td', 'sha256', '/tr', $cfg.Timestamp)
+    if ($cfg.IsPfx) {
+        $signArgs += @('/f', $cfg.Cert)
+        if ($cfg.Password) { $signArgs += @('/p', $cfg.Password) }
+    } else {
+        # 证书已导入证书库：按指纹选证书
+        $signArgs += @('/sha1', ($cfg.Cert -replace '\s', ''))
+    }
+    $signArgs += @('/a', $Path)
+    Invoke-Checked -Exe $signtool -Arguments $signArgs -What ("签名 " + [System.IO.Path]::GetFileName($Path))
+
+    Invoke-Checked -Exe $signtool -Arguments @('verify', '/pa', '/v', $Path) `
+        -What ("验签 " + [System.IO.Path]::GetFileName($Path))
+
+    $sig = Get-AuthenticodeSignature -LiteralPath $Path
+    if ($sig.Status -ne 'Valid') {
+        throw "签名校验未通过：$Path（状态 $($sig.Status)：$($sig.StatusMessage)）。签名不受信任的包不能发布。"
+    }
+    Write-Host "  已签名并通过验签：$([System.IO.Path]::GetFileName($Path))（$($sig.SignerCertificate.Subject)）" -ForegroundColor Green
+    return $true
+}
+
+function Get-SignatureInfo {
+    param([Parameter(Mandatory = $true)][string]$Path)
+    try {
+        $sig = Get-AuthenticodeSignature -LiteralPath $Path
+        return [ordered]@{
+            signed  = ($sig.Status -eq 'Valid')
+            status  = [string]$sig.Status
+            subject = if ($sig.SignerCertificate) { $sig.SignerCertificate.Subject } else { $null }
+            issuer  = if ($sig.SignerCertificate) { $sig.SignerCertificate.Issuer } else { $null }
+        }
+    } catch {
+        return [ordered]@{ signed = $false; status = 'Unknown'; subject = $null; issuer = $null }
+    }
+}
+
 function Get-VendorPostgres {
     <#
       下载并解压 PostgreSQL Windows 二进制（EnterpriseDB 官方 zip 发行版）。
@@ -220,98 +334,6 @@ function Install-PgVector {
     $env:PGROOT = $PgHome
     Invoke-Checked -Exe 'cmd.exe' -Arguments @('/c', "nmake /F Makefile.win PG_CONFIG=`"$pgConfig`" && nmake /F Makefile.win install PG_CONFIG=`"$pgConfig`"") -WorkDir (Join-Path $src 'src') -What "pgvector 编译"
     return ((Test-Path -LiteralPath (Join-Path $share 'vector.control')))
-}
-
-# --------------------------------------------------------------------------- #
-# 代码签名（阶段 8/9 遗留 P0：签名自动化）
-#
-# 证书只从环境变量读，绝不写死在脚本/仓库里：
-#   AIMS_SIGN_CERT      .pfx 证书文件路径（留空 = 不签名，仅内部测试用）
-#   AIMS_SIGN_PASSWORD  证书密码（可空；有密码时才传 /p）
-#   AIMS_SIGN_TIMESTAMP 时间戳服务器（默认 http://timestamp.digicert.com）
-#   AIMS_SIGN_REQUIRED  设为 1/true/yes/on 时缺配置直接失败（发版流水线用）
-#
-# 顺序陷阱（由 tests/test_release_chain.py 锁死）：
-#   1. 主程序必须在 ISCC 打包之前签，否则安装包内是未签名 EXE；
-#   2. 安装包必须在生成 SHA256SUMS 之前签，否则签完哈希就变了。
-# --------------------------------------------------------------------------- #
-function Resolve-SignTool {
-    <# 找 signtool.exe：Windows SDK 优先，其次 Visual Studio，最后 PATH。#>
-    $candidates = @()
-    $kits = Join-Path ${env:ProgramFiles(x86)} 'Windows Kits\10\bin'
-    if (Test-Path -LiteralPath $kits) {
-        $candidates += Get-ChildItem -LiteralPath $kits -Directory -ErrorAction SilentlyContinue |
-            Sort-Object Name -Descending |
-            ForEach-Object { Join-Path $_.FullName 'x64\signtool.exe' }
-    }
-    foreach ($vs in @((Join-Path $env:ProgramFiles 'Microsoft Visual Studio'),
-                      (Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio'))) {
-        if (Test-Path -LiteralPath $vs) {
-            $candidates += Get-ChildItem -LiteralPath $vs -Recurse -Filter 'signtool.exe' -File -ErrorAction SilentlyContinue |
-                Select-Object -First 1 -ExpandProperty FullName
-        }
-    }
-    $candidates += 'signtool.exe'
-    foreach ($c in $candidates) {
-        if (-not $c) { continue }
-        $cmd = Get-Command $c -ErrorAction SilentlyContinue
-        if ($cmd) { return $cmd.Source }
-    }
-    return $null
-}
-
-function Get-SignConfig {
-    <# 读签名配置。未配置证书不是错误（内部测试允许不签名），但必须明确告警；
-       AIMS_SIGN_REQUIRED=1 时缺配置直接失败，见 Sign-AimsFile。#>
-    $cert = ($env:AIMS_SIGN_CERT ?? '').Trim()
-    $required = ($env:AIMS_SIGN_REQUIRED ?? '').Trim().ToLower() -in @('1', 'true', 'yes', 'on')
-    $timestamp = ($env:AIMS_SIGN_TIMESTAMP ?? '').Trim()
-    if (-not $timestamp) { $timestamp = 'http://timestamp.digicert.com' }
-    return [ordered]@{
-        Cert      = $cert
-        Password  = $env:AIMS_SIGN_PASSWORD
-        Timestamp = $timestamp
-        Required  = $required
-        Enabled   = ($cert -ne '' -and (Test-Path -LiteralPath $cert))
-    }
-}
-
-function Get-SignatureInfo {
-    <# 读一个文件的 Authenticode 签名状态（验签用，不签名）。#>
-    param([Parameter(Mandatory = $true)][string]$Path)
-    return Get-AuthenticodeSignature -LiteralPath $Path
-}
-
-function Sign-AimsFile {
-    <# 签一个文件并立即验签，返回 @{ Path; Signed; Signer }。
-       未配置证书时：默认只告警并返回 Signed=$false（内部测试允许）；
-       AIMS_SIGN_REQUIRED=1 时直接抛错，禁止静默发出未签名包。#>
-    param([Parameter(Mandatory = $true)][string]$Path)
-    $cfg = Get-SignConfig
-    if (-not $cfg.Enabled) {
-        if ($cfg.Required) {
-            throw "未配置代码签名证书（AIMS_SIGN_CERT），但 AIMS_SIGN_REQUIRED=1，构建中止。"
-        }
-        Write-Host "  ! 未配置代码签名，跳过签名（仅内部测试用，禁止对外发布）：$Path" -ForegroundColor Yellow
-        return [pscustomobject]@{ Path = $Path; Signed = $false; Signer = $null }
-    }
-    $signtool = Resolve-SignTool
-    if (-not $signtool) {
-        throw "找不到 signtool.exe（需安装 Windows SDK 或 Visual Studio），无法签名：$Path"
-    }
-    $signArgs = @('sign', '/fd', 'SHA256', '/f', $cfg.Cert)
-    if ($cfg.Password) { $signArgs += @('/p', $cfg.Password) }
-    $signArgs += @('/tr', $cfg.Timestamp, '/td', 'SHA256', '/v', $Path)
-    Invoke-Checked -Exe $signtool -Arguments $signArgs -What "签名 $Path"
-    # 签名后必须验签，否则"签名失败"会被当成成功。
-    & $signtool 'verify', '/pa', '/v', $Path
-    if ($LASTEXITCODE -ne 0) { throw "验签失败：$Path" }
-    $info = Get-SignatureInfo -Path $Path
-    if ($info.Status -ne 'Valid') { throw "验签失败（状态 $($info.Status)）：$Path" }
-    $signer = $null
-    if ($info.SignerCertificate) { $signer = $info.SignerCertificate.Subject }
-    Write-Host "  已签名：$Path（$signer）" -ForegroundColor Green
-    return [pscustomobject]@{ Path = $Path; Signed = $true; Signer = $signer }
 }
 
 # --------------------------------------------------------------------------- #

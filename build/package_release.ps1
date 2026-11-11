@@ -57,16 +57,24 @@ New-Item -ItemType Directory -Path $OutDir -Force | Out-Null
 
 # ---- 安装包 ----
 Copy-Item -LiteralPath $Installer -Destination $OutDir -Force
-$installerCopy = Join-Path $OutDir ([System.IO.Path]::GetFileName($Installer))
 if ($Arm64Installer) {
     if (-not (Test-Path -LiteralPath $Arm64Installer)) { throw "ARM64 安装包不存在：$Arm64Installer" }
     Copy-Item -LiteralPath $Arm64Installer -Destination $OutDir -Force
 }
 
-# ---- 代码签名（顺序陷阱 2：安装包必须在生成 SHA256SUMS 之前签，否则签完哈希失真）----
-$signResult = Sign-AimsFile -Path $installerCopy
-if (-not $signResult.Signed) {
-    Write-Host "  ! 本次发行包未签名（未配置代码签名证书，见 AIMS_SIGN_CERT）。仅用于内部测试，禁止对外发布。" -ForegroundColor Yellow
+# ---- 代码签名（必须在生成校验和之前） ----
+# 打包时再签一次是刻意的兜底：安装包可能来自上一次构建、或 build_x64.ps1 是带
+# -SkipSign 跑的。签名会改写 PE 头，签完再算哈希才对得上。
+Write-Step "代码签名"
+$installerCopy = Join-Path $OutDir ([System.IO.Path]::GetFileName($Installer))
+$signedX64 = Sign-AimsFile -Path $installerCopy
+$signedArm = $null
+if ($Arm64Installer) {
+    $signedArm = Sign-AimsFile -Path (Join-Path $OutDir ([System.IO.Path]::GetFileName($Arm64Installer)))
+}
+if (-not $signedX64) {
+    Write-Host "  ! 本次发行包未签名：Windows SmartScreen 会提示「未知发布者」。" -ForegroundColor Yellow
+    Write-Host "    配置 AIMS_SIGN_CERT / AIMS_SIGN_PASSWORD 后重新打包即可签名。" -ForegroundColor Yellow
 }
 
 # ---- 文档与脚本 ----
@@ -115,8 +123,8 @@ $manifest = [ordered]@{
         sha256 = (Get-FileHash -LiteralPath $installerCopy -Algorithm SHA256).Hash.ToLower()
     }
     code_signing = [ordered]@{
-        signed = $signResult.Signed
-        signer = $signResult.Signer
+        signed = ($signedX64 -eq $true)
+        x64    = Get-SignatureInfo -Path $installerCopy
     }
     arm64_installer = if ($Arm64Installer) {
         @{

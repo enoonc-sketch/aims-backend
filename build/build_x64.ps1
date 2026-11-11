@@ -91,6 +91,13 @@ Build-Backend -Python $Python -OutDir (Join-Path $script:DistDir 'backend')
 $backendExe = Join-Path $script:DistDir 'backend\AIMS-Backend\AIMS-Backend.exe'
 if (-not (Test-Path -LiteralPath $backendExe)) { throw "后端产物缺失：$backendExe" }
 
+# 代码签名（P0）：主程序先签，再让 ISCC 把它们打进安装包；安装包本身在第 7 步之后签。
+# 未配置 AIMS_SIGN_CERT 时只告警不中断（内部测试构建）；正式发版请设 AIMS_SIGN_REQUIRED=1，
+# 缺配置即失败，避免"忘记签名就发出去了"。
+$launcherBuiltExe = Join-Path $script:DistDir 'launcher\AIMS.exe'
+Sign-AimsFile -Path $backendExe | Out-Null
+if (Test-Path -LiteralPath $launcherBuiltExe) { Sign-AimsFile -Path $launcherBuiltExe | Out-Null }
+
 # --------------------------------------------------------------------------- #
 Write-Step "6/8 冒烟测试（构建产物必须能跑起来）"
 Invoke-Checked -Exe $backendExe -Arguments @('deploy', 'version') -What '后端 EXE 自检'
@@ -102,12 +109,10 @@ if ($LASTEXITCODE -ne 0) { Write-Host "  ! 单元测试未全部通过，请先�
 
 # --------------------------------------------------------------------------- #
 Write-Step "7/8 编译安装程序（Inno Setup）"
-# 签名顺序陷阱 1：主程序必须在 ISCC 打包之前签，否则安装包内是未签名 EXE。
-$signBackend = Sign-AimsFile -Path $backendExe
 $setup = Build-Installer -Version $version -Arch x64
+# 签安装包（此时包内 EXE 已签名）。签名后才会计算校验和，顺序不能反。
+Sign-AimsFile -Path $setup | Out-Null
 Write-Host "  产物：$setup" -ForegroundColor Green
-# 安装包本身也要签（哈希在 8/8 报告里重新算，不会失真）。
-$signSetup = Sign-AimsFile -Path $setup
 
 # --------------------------------------------------------------------------- #
 Write-Step "8/8 构建报告"
@@ -125,12 +130,8 @@ $report = [ordered]@{
     backend_size_mb    = Get-PackageSizeMB -Path (Join-Path $script:DistDir 'backend')
     llama_cpp          = -not $SkipAi
     sha256             = (Get-FileHash -LiteralPath $setup -Algorithm SHA256).Hash.ToLower()
-    code_signing       = [ordered]@{
-        backend_signed   = $signBackend.Signed
-        installer_signed = $signSetup.Signed
-        backend_signer   = $signBackend.Signer
-        installer_signer = $signSetup.Signer
-    }
+    code_signing       = Get-SignatureInfo -Path $setup
+    backend_signature  = Get-SignatureInfo -Path $backendExe
 }
 New-Item -ItemType Directory -Path $script:BuildDir -Force | Out-Null
 $reportPath = Join-Path $script:BuildDir "build-report-x64.json"

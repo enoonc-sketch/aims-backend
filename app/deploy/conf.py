@@ -109,6 +109,44 @@ def read_secrets(layout: Layout | None = None) -> dict[str, Any]:
         return {}
 
 
+def first_login_credentials_path(layout: Layout | None = None) -> Path:
+    layout = layout or load_layout()
+    return layout.config_dir / "first-login.txt"
+
+
+def write_first_login_credentials(layout: Layout, *, username: str, password: str,
+                                  api_port: int = 8000) -> Path:
+    """首次安装时把随机生成的管理员初始密码写成人能读的文件。
+
+    随机口令本身在 Config/secrets.json 里（JSON、0600），但那是给程序读的；
+    安装人员/最终用户需要一份直接可读的凭据，否则只能对着 admin/admin 反复
+    尝试登录失败。文件放在与 secrets.json 相同的 Config 目录（ACL 同样受限）。
+    """
+    path = first_login_credentials_path(layout)
+    text = (
+        "AIMS 首次登录凭据（安装时自动生成）\n"
+        "====================================\n"
+        "\n"
+        "登录入口：桌面快捷方式「AIMS」，或浏览器打开\n"
+        f"    http://127.0.0.1:{api_port}/frontend.html\n"
+        "\n"
+        f"用户名：{username}\n"
+        f"初始密码：{password}\n"
+        "\n"
+        "重要提示：\n"
+        "  1. 首次登录后请立即在「系统设置 → Users」中修改密码。\n"
+        "  2. 密码修改后本文件内容即失效，建议尽快删除本文件。\n"
+        "  3. 部署人员也可自定义初始密码：\n"
+        "         AIMS-Backend.exe deploy provision --admin-password <新密码>\n"
+    )
+    path.write_text(text, encoding="utf-8")
+    try:
+        os.chmod(path, 0o600)
+    except OSError:
+        pass
+    return path
+
+
 # --------------------------------------------------------------------------- #
 # Generated configuration file (config/aims.env)
 # --------------------------------------------------------------------------- #
