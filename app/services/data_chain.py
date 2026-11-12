@@ -115,8 +115,15 @@ def link_gateway(db: Session, device: Device, gateway: Gateway) -> None:
     (the many-to-many join used by the Communication page to show which
     devices ride which gateway)."""
     existing = db.get(GatewayDevice, {"gateway_id": gateway.id, "device_id": device.id})
-    if existing is None:
-        db.add(GatewayDevice(gateway_id=gateway.id, device_id=device.id))
+    if existing is not None:
+        return
+    # 会话是 autoflush=False：同一事务里前面刚 add 但还没 flush 的关联，db.get() 看不到，
+    # 重复 add 会在提交时撞 (gateway_id, device_id) 唯一约束（POST /devices/{id}/components
+    # 给新 TAG 绑网关时就是这样返回 500 的）。所以要连"待写入"的对象一起查。
+    for obj in db.new:
+        if isinstance(obj, GatewayDevice) and obj.gateway_id == gateway.id and obj.device_id == device.id:
+            return
+    db.add(GatewayDevice(gateway_id=gateway.id, device_id=device.id))
 
 
 # ------------------------------------------------------- 报警 / 维护 -------

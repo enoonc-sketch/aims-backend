@@ -217,7 +217,7 @@ def test_demo_and_forged_tokens_rejected(anon_client, db_session):
     assert security.decode_access_token(f"{hdr}.{pl}.") is None
 
     # signed with another key
-    from jose import jwt
+    import jwt
 
     forged = jwt.encode({"sub": str(u.id), "type": "access"}, "z" * 40, algorithm="HS256")
     assert security.decode_access_token(forged) is None
@@ -241,7 +241,7 @@ def test_access_token_claims(anon_client, db_session):
 
 
 def test_expired_access_token_rejected(db_session):
-    from jose import jwt
+    import jwt
 
     u = _user(db_session)
     past = datetime.now(timezone.utc) - timedelta(minutes=5)

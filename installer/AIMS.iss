@@ -16,7 +16,7 @@
 ;  * 覆盖升级前自动做数据库备份 + 保留旧程序副本（rollback\<版本>），
 ;    升级后自检不通过时自动回滚，回到安装前的状态。
 ;
-;  编译：ISCC.exe /DAppVersion=1.0.3 installer\AIMS.iss
+;  编译：ISCC.exe /DAppVersion=1.0.4 installer\AIMS.iss
 ;       （build_x64.ps1 会自动调用，并把 dist 里的产物摆好）
 ; ============================================================================
 
@@ -24,7 +24,7 @@
 #define MyAppShortName "AIMS"
 #define MyAppPublisher "AIMS"
 #ifndef AppVersion
-  #define AppVersion "1.0.3"
+  #define AppVersion "1.0.4"
 #endif
 #ifndef BuildArch
   #define BuildArch "x64"

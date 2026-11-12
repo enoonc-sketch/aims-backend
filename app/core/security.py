@@ -5,8 +5,8 @@ Hard rules (no fallbacks, in any environment):
     to import instead of silently degrading to a weak scheme.
   * There is no SHA-256 (or any other) password fallback, and legacy
     "sha256$..." hashes are never accepted.
-  * JWTs are always signed (HS256 via python-jose) and always verified. There is
-    no unsigned/"demo." token format. Missing python-jose fails the import.
+  * JWTs are always signed (HS256 via PyJWT) and always verified. There is
+    no unsigned/"demo." token format. Missing PyJWT fails the import.
   * Access tokens are short lived; long sessions use rotating refresh tokens
     (opaque random strings, stored only as keyed digests in the database).
 """
@@ -131,7 +131,7 @@ def decode_access_token(token: str) -> Optional[dict[str, Any]]:
     if not token or token.count(".") != 2:
         return None
     try:
-        # PyJWT options 语义：require=[...] 与 jose 的 require_* 一一对应；
+        # PyJWT options 语义：require=[...] 强制令牌必须携带这些声明；
         # algorithms 显式钉死 HS256，杜绝 alg=none / RS-HS 混淆。
         payload = pyjwt.decode(
             token,

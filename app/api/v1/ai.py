@@ -238,7 +238,7 @@ def health_score(device_id: int, db: Session = Depends(get_db)):
 
     from app.services.ai_cores import health_penalties
     from app.models.alarm import Alarm
-    from sqlalchemy import distinct, func, select
+    from sqlalchemy import func, select
 
     pack = health_penalties()
     penalties = pack.get("penalties") or {}
@@ -288,9 +288,9 @@ def health_score(device_id: int, db: Session = Depends(get_db)):
     from app.services import anomaly
 
     components = db.scalars(
-        select(distinct(Measurement.component_name)).where(
-            Measurement.device_id == device_id, Measurement.time >= since24
-        )
+        select(Measurement.component_name)
+        .where(Measurement.device_id == device_id, Measurement.time >= since24)
+        .distinct()
     ).all()
     anomaly_penalty = 0.0
     anomalous_components: list[str] = []

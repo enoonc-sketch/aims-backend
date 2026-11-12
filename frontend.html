@@ -911,8 +911,10 @@ function apiBase() {
 }
 
 // ---- Session tokens: short-lived access token + rotating refresh token ----
-// 登录失效时全站统一的中文提示文案（登录接口自身 401 是"用户名或密码错误"，不走这条）
-var AIMS_SESSION_EXPIRED_MSG = '登录已失效，请重新登录（System → Login）。';
+// 登录失效时全站统一的提示文案（随界面语言切换）（登录接口自身 401 是"用户名或密码错误"，不走这条）
+function aimsExpiredMsg() {
+  try { return t('sessionExpired'); } catch (e) { return 'Your session has expired. Please sign in again (System → Login).'; }
+}
 function aimsTokens() {
   try { return { access: localStorage.getItem('aims_token'), refresh: localStorage.getItem('aims_refresh') }; }
   catch (e) { return { access: null, refresh: null }; }
@@ -996,10 +998,10 @@ function aimsSessionExpired(msg, silent) {
   if (res) {
     res.style.display = '';
     res.className = 'login-result error';
-    res.textContent = msg || AIMS_SESSION_EXPIRED_MSG;
+    res.textContent = msg || aimsExpiredMsg();
   }
   var bar = document.getElementById('sessionBanner');
-  if (bar) { bar.style.display = ''; bar.textContent = msg || AIMS_SESSION_EXPIRED_MSG; }
+  if (bar) { bar.style.display = ''; bar.textContent = msg || aimsExpiredMsg(); }
   if (!silent) aimsShowExpiredToast(msg);
 }
 // Global notice (visible on every page) with a one-click jump to System → Login.
@@ -1013,14 +1015,17 @@ function aimsShowExpiredToast(msg) {
       + 'color:#a8071a;border:1px solid #ffa39e;border-radius:8px;padding:10px 14px;box-shadow:0 4px 16px rgba(0,0,0,.15);'
       + 'font-size:14px;display:flex;gap:12px;align-items:center;max-width:90vw';
     var span = document.createElement('span'); span.id = 'sessionToastMsg';
-    var go = document.createElement('button'); go.className = 'btn btn-primary'; go.textContent = 'Sign in';
+    var go = document.createElement('button'); go.className = 'btn btn-primary'; go.textContent = window.t('signIn');
     go.onclick = function() { aimsGoToLogin(); t.style.display = 'none'; };
-    var x = document.createElement('button'); x.className = 'btn btn-gray'; x.textContent = '×'; x.setAttribute('aria-label', 'Dismiss');
+    var x = document.createElement('button'); x.className = 'btn btn-gray'; x.textContent = '×'; x.setAttribute('aria-label', window.t('dismiss'));
     x.onclick = function() { t.style.display = 'none'; };
     t.appendChild(span); t.appendChild(go); t.appendChild(x);
     document.body.appendChild(t);
   }
-  document.getElementById('sessionToastMsg').textContent = msg || AIMS_SESSION_EXPIRED_MSG;
+  var _tb = t.querySelectorAll('button');   // 弹窗可能是切换语言前创建的：每次显示都刷新按钮文字
+  if (_tb[0]) _tb[0].textContent = window.t('signIn');
+  if (_tb[1]) _tb[1].setAttribute('aria-label', window.t('dismiss'));
+  document.getElementById('sessionToastMsg').textContent = msg || aimsExpiredMsg();
   t.style.display = 'flex';
 }
 function aimsGoToLogin() {
@@ -1038,7 +1043,7 @@ function aimsRenderSession() {
   if (box) {
     box.style.display = signed ? '' : 'none';
     var who = document.getElementById('sessionUser');
-    if (who) who.textContent = _aimsUser ? (_aimsUser.username + (_aimsUser.is_superuser ? ' · Administrator' : '')) : 'Signed in';
+    if (who) who.textContent = _aimsUser ? (_aimsUser.username + (_aimsUser.is_superuser ? t('loginAdminTag') : '')) : t('signedInGeneric');
   }
   if (form) form.style.display = signed ? 'none' : '';
   if (bar && signed) bar.style.display = 'none';
@@ -1046,7 +1051,7 @@ function aimsRenderSession() {
 // Another tab logged in/out or rotated the refresh token: follow it.
 window.addEventListener('storage', function(e) {
   if (e.key === 'aims_token' || e.key === 'aims_refresh') {
-    if (!aimsTokens().access) { aimsSessionExpired('Signed out in another tab.', true); }
+    if (!aimsTokens().access) { aimsSessionExpired(t('signedOutOtherTab'), true); }
     else { aimsScheduleRefresh(); aimsRenderSession(); }
   }
 });
@@ -1080,8 +1085,8 @@ function aimsFetch(path, options) {
         aimsScheduleRefresh();
         return aimsFetch(path, Object.assign({}, options, { _retried: true }));
       }, function(e) {
-        if (!aimsTokens().access) aimsSessionExpired(AIMS_SESSION_EXPIRED_MSG);
-        if (e && (e.httpStatus === 401 || e.httpStatus === 403)) e.message = AIMS_SESSION_EXPIRED_MSG;
+        if (!aimsTokens().access) aimsSessionExpired(aimsExpiredMsg());
+        if (e && (e.httpStatus === 401 || e.httpStatus === 403)) e.message = aimsExpiredMsg();
         throw e;
       });
     }
@@ -1094,10 +1099,10 @@ function aimsFetch(path, options) {
         // 受保护接口返回 401：曾经登录过（带过 Token）→ 全局重新认证提示；
         // 匿名访问（从未登录）→ 保持页面内的静默提示，不弹"登录已失效"。
         if (hadToken || retried) {
-          aimsSessionExpired(AIMS_SESSION_EXPIRED_MSG);
-          err.message = AIMS_SESSION_EXPIRED_MSG;
+          aimsSessionExpired(aimsExpiredMsg());
+          err.message = aimsExpiredMsg();
         } else {
-          err.message = AIMS_SESSION_EXPIRED_MSG;
+          err.message = aimsExpiredMsg();
         }
       }
       throw err;
@@ -1140,20 +1145,20 @@ function aimsUpload(path, file, extraFields, _retried) {
         aimsScheduleRefresh();
         return aimsUpload(path, file, extraFields, true);
       }, function(e) {
-        if (!aimsTokens().access) aimsSessionExpired(AIMS_SESSION_EXPIRED_MSG);
-        if (e && (e.httpStatus === 401 || e.httpStatus === 403)) e.message = AIMS_SESSION_EXPIRED_MSG;
+        if (!aimsTokens().access) aimsSessionExpired(aimsExpiredMsg());
+        if (e && (e.httpStatus === 401 || e.httpStatus === 403)) e.message = aimsExpiredMsg();
         throw e;
       });
     }
     return resp.json().catch(function(){ return {}; }).then(function(body) {
       if (!resp.ok) {
         var msg = aimsDetailText(body, resp.status);
-        if (resp.status === 413) msg = 'File is too large for the server (limit ' + Math.round(AIMS_MAX_UPLOAD_BYTES / 1048576) + ' MB).';
+        if (resp.status === 413) msg = tf('fileTooLargeServer', Math.round(AIMS_MAX_UPLOAD_BYTES / 1048576));
         else if (resp.status === 401) {
-          msg = '请先登录（System → Login）。';
-          if (hadToken || _retried) aimsSessionExpired(AIMS_SESSION_EXPIRED_MSG);
+          msg = t('loginRequired');
+          if (hadToken || _retried) aimsSessionExpired(aimsExpiredMsg());
         }
-        else if (resp.status === 429) msg = 'Too many requests. Please wait and try again.';
+        else if (resp.status === 429) msg = t('tooManyRequests');
         var e2 = new Error(msg); e2.httpStatus = resp.status; throw e2;
       }
       return body;
@@ -1168,30 +1173,30 @@ var AIMS_MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
 var AIMS_ALLOWED_EXTS = ['csv', 'xlsx', 'xls'];
 function aimsPrecheckFile(file) {
   return new Promise(function(resolve) {
-    if (!file) return resolve('No file selected.');
+    if (!file) return resolve(t('fileNone'));
     var name = String(file.name || '');
-    if (/[\\/]/.test(name) || /[\u0000-\u001f]/.test(name)) return resolve('Invalid file name.');
+    if (/[\\/]/.test(name) || /[\u0000-\u001f]/.test(name)) return resolve(t('fileBadName'));
     var m = /\.([A-Za-z0-9]+)$/.exec(name);
     var ext = m ? m[1].toLowerCase() : '';
     if (AIMS_ALLOWED_EXTS.indexOf(ext) < 0) {
-      var hint = (ext === 'xlsm' || ext === 'xlsb') ? ' Macro-enabled workbooks are not accepted; save as .xlsx first.' : '';
-      return resolve('Unsupported file type ".' + ext + '". Allowed: ' + AIMS_ALLOWED_EXTS.join(', ') + '.' + hint);
+      var hint = (ext === 'xlsm' || ext === 'xlsb') ? t('fileMacroHint') : '';
+      return resolve(tf('fileBadType', ext, AIMS_ALLOWED_EXTS.join(', ')) + hint);
     }
-    if (file.size === 0) return resolve('The file is empty.');
+    if (file.size === 0) return resolve(t('fileEmpty'));
     if (file.size > AIMS_MAX_UPLOAD_BYTES) {
-      return resolve('File is too large (' + (file.size / 1048576).toFixed(1) + ' MB). Limit: ' + Math.round(AIMS_MAX_UPLOAD_BYTES / 1048576) + ' MB.');
+      return resolve(tf('fileTooBig', (file.size / 1048576).toFixed(1), Math.round(AIMS_MAX_UPLOAD_BYTES / 1048576)));
     }
     var reader = new FileReader();
-    reader.onerror = function() { resolve('Could not read the file.'); };
+    reader.onerror = function() { resolve(t('fileUnreadable')); };
     reader.onload = function() {
       var b = new Uint8Array(reader.result);
       var isZip = b.length >= 4 && b[0] === 0x50 && b[1] === 0x4B && (b[2] === 0x03 || b[2] === 0x05);
       var isOle = b.length >= 8 && b[0] === 0xD0 && b[1] === 0xCF && b[2] === 0x11 && b[3] === 0xE0;
-      if (ext === 'xlsx' && !isZip) return resolve('This does not look like a real .xlsx file (content does not match its extension).');
-      if (ext === 'xls' && !isOle) return resolve('This does not look like a real .xls file (content does not match its extension).');
+      if (ext === 'xlsx' && !isZip) return resolve(t('fileNotXlsx'));
+      if (ext === 'xls' && !isOle) return resolve(t('fileNotXls'));
       if (ext === 'csv') {
-        if (isZip || isOle) return resolve('This is a binary Excel file renamed to .csv. Use its real extension.');
-        for (var i = 0; i < b.length; i++) { if (b[i] === 0) return resolve('This does not look like a text CSV file (binary content).'); }
+        if (isZip || isOle) return resolve(t('fileCsvIsExcel'));
+        for (var i = 0; i < b.length; i++) { if (b[i] === 0) return resolve(t('fileCsvBinary')); }
       }
       resolve(null);   // ok
     };
@@ -1208,9 +1213,9 @@ function renderImportResult(elId, result) {
     return k + '→"' + result.columns_detected[k] + '"';
   }).join(', ') || '-';
   var html = '<div class="alert-item alert-normal">'
-    + '<strong>' + escHtml(result.file_name) + '</strong>：读取 ' + result.row_count + ' 行，'
-    + '新增 ' + result.inserted + '，更新 ' + (result.updated || 0) + '，跳过 ' + (result.skipped || 0)
-    + '<div style="font-size:12px;color:#666;margin-top:4px">识别列：' + cols + '</div>';
+    + '<strong>' + escHtml(result.file_name) + '</strong>'
+    + tf('importResult', result.row_count, result.inserted, result.updated || 0, result.skipped || 0)
+    + '<div style="font-size:12px;color:#666;margin-top:4px">' + t('importCols') + cols + '</div>';
   if (result.warnings && result.warnings.length) {
     html += '<div style="font-size:12px;color:#c07a00;margin-top:4px">' + result.warnings.slice(0, 8).join('<br>') + '</div>';
   }
@@ -1221,7 +1226,7 @@ function renderImportResult(elId, result) {
 function renderImportError(elId, err) {
   var el = document.getElementById(elId);
   if (!el) return;
-  el.innerHTML = '<div class="alert-item alert-critical">导入失败：' + escHtml(err && err.message ? err.message : String(err)) + '</div>';
+  el.innerHTML = '<div class="alert-item alert-critical">' + t('importFailed') + escHtml(err && err.message ? err.message : String(err)) + '</div>';
 }
 
 // Generic handler wired to an <input type=file>: uploads to `path` (plus
@@ -1233,7 +1238,7 @@ function handleTableImport(input, path, statusElId, extraFieldsFn, onDone) {
   var file = input.files[0];
   if (!file) return;
   var el = document.getElementById(statusElId);
-  if (el) el.innerHTML = '<div class="alert-item alert-normal">正在导入 "' + escHtml(file.name) + '"...</div>';
+  if (el) el.innerHTML = '<div class="alert-item alert-normal">' + tf('importing', escHtml(file.name)) + '</div>';
   var extra = extraFieldsFn ? extraFieldsFn() : null;
   if (extra === false) { input.value = ''; return; } // extraFieldsFn can veto (e.g. no device selected)
   aimsPrecheckFile(file).then(function(problem) {
@@ -1296,7 +1301,39 @@ const translations = {
     signedOut: 'You have been signed out.',
     passShow: 'Show', passHide: 'Hide', capsLockOn: 'Caps Lock is on',
     placeholderUser: 'Enter username', placeholderPass: 'Enter password',
-    signedInAs: 'Signed in as ', signOut: 'Sign out'
+    signedInAs: 'Signed in as ', signOut: 'Sign out',
+    sessionExpired: "Your session has expired. Please sign in again (System → Login).",
+    loginRequired: "Please sign in first (System → Login).",
+    backendUnreachable: "Cannot reach the backend, or you are not signed in: ",
+    signIn: "Sign in",
+    dismiss: "Dismiss",
+    signedInGeneric: "Signed in",
+    signedOutOtherTab: "Signed out in another tab.",
+    fileTooLargeServer: "File is too large for the server (limit {0} MB).",
+    tooManyRequests: "Too many requests. Please wait and try again.",
+    fileNone: "No file selected.",
+    fileBadName: "Invalid file name.",
+    fileBadType: "Unsupported file type \".{0}\". Allowed: {1}.",
+    fileMacroHint: " Macro-enabled workbooks are not accepted; save as .xlsx first.",
+    fileEmpty: "The file is empty.",
+    fileTooBig: "File is too large ({0} MB). Limit: {1} MB.",
+    fileUnreadable: "Could not read the file.",
+    fileNotXlsx: "This does not look like a real .xlsx file (content does not match its extension).",
+    fileNotXls: "This does not look like a real .xls file (content does not match its extension).",
+    fileCsvIsExcel: "This is a binary Excel file renamed to .csv. Use its real extension.",
+    fileCsvBinary: "This does not look like a text CSV file (binary content).",
+    importFailed: "Import failed: ",
+    importing: "Importing “{0}”...",
+    importResult: ": read {0} rows, {1} added, {2} updated, {3} skipped",
+    importCols: "Detected columns: ",
+    unknownError: "unknown error",
+    cloudSyncDone: "Done: downloaded {0} rows, added {1} rows, found {2} gaps{3} — data is now in “Data Management”",
+    cloudSyncFailed: "Failed: {0}",
+    extCoverageLabel: "Data coverage (last {0} h, expected {1} points, actual {2} points)",
+    extGapSummary: "{0} gaps, longest {1} min; last data: ",
+    extStale: "Stale",
+    extLabLinkLabel: "Lab link: online-data coverage within ±{0} min of each lab sample time",
+    dmPageInfo: "Showing {0}–{1} of {2}"
   },
   zh: {
     pageTitle_dash: '仪表盘', pageTitle_dev: '设备管理', pageTitle_comm: '通讯管理',
@@ -1343,7 +1380,39 @@ const translations = {
     signedOut: '您已退出登录。',
     passShow: '显示', passHide: '隐藏', capsLockOn: '大写锁定已开启',
     placeholderUser: '请输入用户名', placeholderPass: '请输入密码',
-    signedInAs: '已登录：', signOut: '退出登录'
+    signedInAs: '已登录：', signOut: '退出登录',
+    sessionExpired: "登录已失效，请重新登录（系统设置 → 登录）。",
+    loginRequired: "请先登录（系统设置 → 登录）。",
+    backendUnreachable: "无法连接后端或未登录：",
+    signIn: "去登录",
+    dismiss: "关闭",
+    signedInGeneric: "已登录",
+    signedOutOtherTab: "已在其他标签页退出登录。",
+    fileTooLargeServer: "文件超出服务器限制（上限 {0} MB）。",
+    tooManyRequests: "请求过于频繁，请稍候再试。",
+    fileNone: "未选择文件。",
+    fileBadName: "文件名无效。",
+    fileBadType: "不支持的文件类型“.{0}”，仅支持：{1}。",
+    fileMacroHint: "（不接受含宏的工作簿，请先另存为 .xlsx。）",
+    fileEmpty: "文件为空。",
+    fileTooBig: "文件过大（{0} MB），上限 {1} MB。",
+    fileUnreadable: "无法读取该文件。",
+    fileNotXlsx: "这不是真正的 .xlsx 文件（内容与扩展名不符）。",
+    fileNotXls: "这不是真正的 .xls 文件（内容与扩展名不符）。",
+    fileCsvIsExcel: "这是被改名为 .csv 的二进制 Excel 文件，请使用其真实扩展名。",
+    fileCsvBinary: "这不像是文本 CSV 文件（含二进制内容）。",
+    importFailed: "导入失败：",
+    importing: "正在导入“{0}”...",
+    importResult: "：读取 {0} 行，新增 {1}，更新 {2}，跳过 {3}",
+    importCols: "识别列：",
+    unknownError: "未知错误",
+    cloudSyncDone: "完成：下载 {0} 行，新增 {1} 行，发现断点 {2} 个{3} — 数据已进入「数据管理」",
+    cloudSyncFailed: "失败：{0}",
+    extCoverageLabel: "数据覆盖率（近 {0} 小时，期望 {1} 点，实际 {2} 点）",
+    extGapSummary: "断点 {0} 个，最长 {1} 分钟；最后数据：",
+    extStale: "已停更",
+    extLabLinkLabel: "实验室挂钩：化验样品在采样时刻 ±{0} 分钟内的在线数据覆盖",
+    dmPageInfo: "第 {0}–{1} 条，共 {2} 条"
   }
 };
 var currentLang = 'en';
@@ -1353,9 +1422,16 @@ function t(key) { return translations[currentLang][key] || translations.en[key] 
 // 带占位符的翻译：tf('lockoutRetry', mm, ss) 把 {0}/{1} 依次替换
 function tf(key) {
   var s = t(key);
-  for (var i = 1; i < arguments.length; i++) s = s.replace('{' + (i - 1) + '}', String(arguments[i]));
+  for (var i = 1; i < arguments.length; i++) {
+    // 用函数做替换值：避免参数里的 "$&" 等被当成替换模式（错误信息里可能出现）
+    var tok = '{' + (i - 1) + '}', val = String(arguments[i]);
+    s = s.replace(tok, function() { return val; });
+  }
   return s;
 }
+
+// 动态拼接的界面文字：L('English', '中文') 按当前界面语言取一个
+function L(en, zh) { return currentLang === 'zh' ? zh : en; }
 
 function changeLang(lang) {
   currentLang = lang;
@@ -1374,8 +1450,410 @@ function changeLang(lang) {
       document.getElementById('pageTitle').textContent = dict[titleKey] || pageId.toUpperCase();
     }
     updateAllUIText(dict);
+    _i18nSnapshot(); _i18nApply(lang);
+    document.documentElement.setAttribute('lang', lang === 'zh' ? 'zh-CN' : 'en');
     if (typeof aiApplyLang === 'function') aiApplyLang();
+    _i18nRerenderDynamic();
   }
+}
+
+// ===== 静态文案逐字配对（双向切换）=====
+// 页面里大量静态文字（页面说明、表头、占位符、提示）没有逐个加 data-i18n。启动时给"文本节点 /
+// placeholder / title"拍快照：精确命中下表的节点会记住自己的英文与中文，changeLang 时双向切换；
+// 没命中的（用户数据、技术名词）一律不动。条目 = [英文, 中文, [别名写法…]]，别名用于页面里
+// 写成了混排/另一种写法的原文。带 data-i18n / data-ai-i18n / data-no-i18n 的元素由各自机制负责。
+var I18N_PAIRS = [
+  ["AIMS - Industrial Analyzer Smart O&M Platform", "AIMS - 工业分析仪智能运维平台"],
+  ["All Status", "全部状态"],
+  ["Refresh", "刷新"],
+  ["Online", "在线"],
+  ["Offline", "离线"],
+  ["Warning", "告警", ["警告"]],
+  ["Fault", "故障"],
+  ["Name", "名称"],
+  ["Status", "状态"],
+  ["Type", "类型"],
+  ["Device", "设备"],
+  ["Component", "组分"],
+  ["Actions", "操作"],
+  ["Password", "密码"],
+  ["Username", "用户名"],
+  ["Loading...", "加载中..."],
+  ["Loading…", "加载中…"],
+  ["⚠️ Showing demo data (backend not connected). It switches to live data automatically once you configure the API address and sign in.", "⚠️ 当前展示的是演示数据（未连接后端）。配置 API 地址并登录后会自动切换为真实数据。"],
+  ["Total Devices", "设备总数"],
+  ["Alarms Today", "今日告警"],
+  ["Faults", "故障数"],
+  ["Work Orders", "工单数"],
+  ["Load Demo Data", "加载演示数据"],
+  ["Export CSV", "导出CSV"],
+  ["Loading chart...", "图表加载中..."],
+  ["Search devices...", "搜索设备..."],
+  ["Add Device", "添加设备"],
+  ["AI device selection", "AI 选型", ["AI device selection / 选型"]],
+  ["🤖 Select", "🤖 选型"],
+  ["Batch Import", "批量导入"],
+  ["Download Template", "下载模板"],
+  ["Import TAGs", "导入TAG"],
+  ["Download TAG Template", "下载TAG模板"],
+  ["Model", "型号"],
+  ["Protocol", "协议"],
+  ["Health", "健康度"],
+  ["Add Gateway", "添加网关"],
+  ["Gateway", "网关"],
+  ["Host", "主机"],
+  ["Port", "端口"],
+  ["Last Test", "最近测试"],
+  ["Alarm List", "报警列表"],
+  ["Alarm Rules", "报警规则"],
+  ["Unacknowledged (active)", "未确认 (active)"],
+  ["Acknowledged", "已确认"],
+  ["Resolved", "已解决"],
+  ["All Levels", "全部等级"],
+  ["Critical", "严重"],
+  ["Notice (normal)", "提示 (normal)"],
+  ["Triggered At", "触发时间"],
+  ["Level", "等级"],
+  ["Description", "描述"],
+  ["Refresh Rules", "刷新规则"],
+  ["Threshold alarm rules; when high_limit_delta is exceeded, the data chain raises an alarm automatically", "阈值报警规则；超过 high_limit_delta 时由数据链自动开报警"],
+  ["Rule / Component", "规则/组分"],
+  ["Limits (low / high)", "上下限"],
+  ["Enabled", "启用"],
+  ["Import", "导入"],
+  ["Trend Chart", "趋势图"],
+  ["History", "历史数据"],
+  ["Cloud Sync", "云数据同步"],
+  ["Target Device", "目标设备"],
+  ["Loading devices...", "设备加载中..."],
+  ["Click or drag file here to upload", "点击或拖拽文件到此处上传"],
+  ["Supports CSV, Excel format", "支持 CSV、Excel 格式"],
+  ["Import History", "导入记录"],
+  ["All Sources", "全部来源"],
+  ["Local Import", "本地导入"],
+  ["Data synced from the cloud is recorded here automatically and managed together with manual imports", "云数据同步下来的数据会自动登记在这里，与手动导入统一管理"],
+  ["Source", "来源"],
+  ["File / Cloud Database", "文件 / 云数据库"],
+  ["Rows Read", "读取行数"],
+  ["Points Stored", "入库点数"],
+  ["Time", "时间"],
+  ["Hours", "小时"],
+  ["Generate Chart", "生成图表"],
+  ["Curve Field (multi-select; includes local imports and cloud sync data)", "曲线字段（可多选；数据包含本地导入与云数据同步）", ["Curve Field（可多选；数据包含本地导入与云数据同步）"]],
+  ["Select a device first", "请先选择设备"],
+  ["All Devices", "全部设备"],
+  ["Component, e.g. O2 (blank = all)", "组分，如 O2（留空=全部）"],
+  ["From", "从"],
+  ["To", "到"],
+  ["Search", "查询", ["搜索"]],
+  ["Export This Page (CSV)", "导出本页CSV"],
+  ["Value", "数值"],
+  ["Quality", "质量"],
+  ["Previous", "上一页"],
+  ["Next", "下一页"],
+  ["These are the vendor cloud-platform databases configured under “Cloud Data”. After a successful sync the data is written to this page’s History / Trend Chart and enters the TAG → alarm → maintenance flow.", "这里是「云数据」里已配置的厂商云平台数据库。同步成功后，数据自动写入本页的历史数据 / 趋势图，并进入 TAG→报警→维护 流程。"],
+  ["Configure Cloud Sources ↗", "配置云数据源 ↗"],
+  ["Cloud Database", "云数据库"],
+  ["Last Sync", "最近同步"],
+  ["Rows This Run", "本次入库"],
+  ["Points On File", "已存点数"],
+  ["Auto Refresh", "自动刷新"],
+  ["Click or drag Excel file here", "点击或拖拽Excel文件到此处"],
+  ["Supports .xlsx / .xls / .csv", "支持 .xlsx / .xls / .csv 格式"],
+  ["Browser security requires clicking to select files.", "浏览器安全策略要求点击选择文件"],
+  ["Batch import to server (saved as dataset + live data)", "批量导入到服务器（保存为数据集+实时数据）"],
+  ["Choose File and Import", "选择文件并导入"],
+  ["Worksheet", "工作表"],
+  ["0 rows, 0 cols", "0 行，0 列"],
+  ["X Axis Field", "X轴字段"],
+  ["Usually select \"Time\", or any numeric/text column.", "通常选择“时间”，也可选择任意数值/文本列。"],
+  ["Curve Fields (Multi-select)", "曲线字段（多选）"],
+  ["Search indicators...", "搜索指标..."],
+  ["Select All Numeric", "全选数值列"],
+  ["Clear", "清除"],
+  ["Data Processing", "数据处理"],
+  ["Filter empty curve rows", "过滤曲线为空的行"],
+  ["Sort by X axis", "按X轴排序"],
+  ["Smooth curves", "平滑曲线"],
+  ["Start Time", "开始时间"],
+  ["End Time", "结束时间"],
+  ["Max Points", "最大点数"],
+  ["Type Filter", "类型过滤"],
+  ["All", "全部"],
+  ["Component Validation", "组分验证"],
+  ["Sum of 19 components should be 99%-101%. Out of range marked as", "19个组分之和应为 99%-101%，超出范围标记为"],
+  ["Abnormal", "异常"],
+  [", otherwise", "，否则为"],
+  ["Normal", "正常"],
+  ["Enable component sum check", "启用组分求和检查"],
+  ["Show major components only", "仅显示主要组分"],
+  ["Major: Nitrogen, CO, CO2, Methane, Ethylene, Propylene, All Butenes, All Pentenes, 1,3-Butadiene", "主要组分：氮气、CO、CO2、甲烷、乙烯、丙烯、全部丁烯、全部戊烯、1,3-丁二烯"],
+  ["Generate Curves", "生成曲线"],
+  ["Download Chart", "下载图表"],
+  ["Reset", "重置"],
+  ["File", "文件"],
+  ["Not Imported", "未导入"],
+  ["Please select Excel", "请选择Excel"],
+  ["Original Rows", "原始行数"],
+  ["Excluding header", "不含表头"],
+  ["Fields", "字段"],
+  ["Numeric 0", "数值列 0"],
+  ["Processed", "处理后"],
+  ["Waiting", "等待中"],
+  ["Curve", "曲线"],
+  ["Preview", "预览"],
+  ["Statistics", "统计"],
+  ["Schema", "模式"],
+  ["Please import Excel file.", "请导入Excel文件。"],
+  ["Import file and select curves to display here.", "导入文件并选择曲线后在此显示。"],
+  ["Diagnosis", "诊断"],
+  ["Prediction", "预测"],
+  ["LLM Chat", "LLM对话"],
+  ["Models", "模型下载"],
+  ["Search devices: code, name, model, location, TAG… or e.g. \"online GC H2S\"", "搜索设备：编号、名称、型号、位置、TAG… 或如“在线 GC H2S”"],
+  ["No device selected — search above to pick one", "未选择设备——请在上方搜索并选择"],
+  ["Drift", "漂移"],
+  ["Noise", "噪声"],
+  ["Response", "响应"],
+  ["Model:", "模型："],
+  ["Loading models...", "模型加载中..."],
+  ["(none)", "（无）"],
+  ["Ask about analyzer data...", "询问分析仪数据..."],
+  ["Send", "发送"],
+  ["AI Model / Core Packs", "AI 模型 / 核心包"],
+  ["Refresh Status", "刷新状态"],
+  ["Open-source offline cores used by Diagnosis / Prediction / Health / Chat. Download packs for local use or offline EXE bundling. Data Analysis chart libraries (Chart.js / xlsx) are also listed.", "诊断 / 预测 / 健康 / 对话使用的开源离线核心包。可下载后本地使用或用于离线 EXE 打包。数据分析图表库（Chart.js / xlsx）一并列出。"],
+  ["⚡ Real-time model recommendation", "⚡ 实时模型推荐"],
+  ["Prefer overseas models", "优先海外模型"],
+  ["Local Inference Engine Install", "本地推理引擎安装", ["本地推理引擎安装 / Local Inference Engine Install"]],
+  ["To run the GGUF models downloaded above you first need to install a matching inference engine. Pick one for your hardware and restart the backend service afterwards. Only available when running from source / dev mode — for a packaged EXE, edit requirements-exe-ai.txt and rerun build_exe.bat.", "运行上面下载的 GGUF 模型，需要先安装对应的推理引擎。根据你的硬件选一个安装，装完建议重启后端服务。仅在源码/开发模式运行时可用——如果是打包后的 EXE，需要修改 requirements-exe-ai.txt 并重新运行 build_exe.bat 打包。"],
+  ["Upload", "上传"],
+  ["RAG Chat", "RAG对话"],
+  ["Search knowledge base...", "搜索知识库..."],
+  ["Download Import Template", "下载导入模板"],
+  ["Click or drag file here", "点击或拖拽文件到此处"],
+  ["Batch import: one document per row; .csv / .xlsx / .xls supported (title + content columns, Chinese or English headers detected automatically)", "批量导入：每行一篇文档，支持 .csv / .xlsx / .xls（标题+内容两列，自动识别中英文表头）"],
+  ["Your Question", "您的问题"],
+  ["Ask about analyzer maintenance...", "询问分析仪维护问题..."],
+  ["Ask", "提问"],
+  ["SOP", "标准作业程序"],
+  ["PDF Import", "PDF导入"],
+  ["ROI Calculator", "ROI计算器"],
+  ["(any component)", "（任意组分）"],
+  ["Import Fault PDF", "导入故障PDF"],
+  ["Upload fault analysis PDF reports", "上传故障分析PDF报告"],
+  ["Months", "月数"],
+  ["Annual benefit (optional)", "年收益（可选）"],
+  ["Batch Import Work Orders", "批量导入工单"],
+  ["Supports .csv / .xlsx / .xls; auto-detects title / device code / type / priority / status / due date", "支持 .csv / .xlsx / .xls，自动识别 标题/设备编号/类型/优先级/状态/截止日期"],
+  ["Title", "标题"],
+  ["Priority", "优先级"],
+  ["Due Date", "截止日期"],
+  ["Batch Import Assets", "批量导入资产"],
+  ["Supports .csv / .xlsx / .xls; auto-detects asset ID / name / category / device code / purchase amount", "支持 .csv / .xlsx / .xls，自动识别 资产编号/名称/类别/设备编号/采购金额"],
+  ["Asset ID", "资产编号"],
+  ["Location", "位置"],
+  ["Install Date", "安装日期"],
+  ["Correlation", "相关性分析"],
+  ["Comparison", "对比分析"],
+  ["mean", "平均值"],
+  ["median", "中位数"],
+  ["nearest", "最近点"],
+  ["Pairs", "配对数"],
+  ["Batch Import Lab vs. Online Comparison Samples", "批量导入化验-在线比对样本"],
+  ["Supports .csv / .xlsx / .xls; auto-detects device code / component / lab value / online value / sampling time", "支持 .csv / .xlsx / .xls，自动识别 设备编号/组分/化验值/在线值/采样时间"],
+  ["Lab Value", "化验值"],
+  ["Online Value", "在线值"],
+  ["Sampled At", "采样时间"],
+  ["Template List", "模板列表"],
+  ["Import Templates", "导入模板"],
+  ["Search template name / description…", "搜索模板名称/描述…"],
+  ["＋ New Template", "＋ 新建模板"],
+  ["Export All Custom Templates", "导出全部自定义模板"],
+  ["System Templates", "系统模板"],
+  ["My Templates", "我的模板"],
+  ["Imported Templates", "已导入模板"],
+  ["Click to choose template files (multiple allowed)", "点击选择模板文件（可多选）"],
+  ["Supports .aimstpl template packs and batch ZIPs containing several .aimstpl files. A preview and security check run automatically before import.", "支持 .aimstpl 模板包，以及内含多个 .aimstpl 的批量 ZIP。导入前自动预览与安全检查。"],
+  ["New Template", "新建模板"],
+  ["Template Name *", "模板名称 *"],
+  ["Category *", "分类 *"],
+  ["Author", "作者"],
+  ["Tags (comma-separated)", "标签（逗号分隔）"],
+  ["Template Body (JSON, contents of template.json) *", "模板正文（JSON，template.json 内容）*"],
+  ["For devices use devices:[{device_code,name,components:[…]}], for alarms use alarm_rules:[…]. Saving creates a new version; older versions can be rolled back from the version list.", "设备类用 devices:[{device_code,name,components:[…]}]，报警类用 alarm_rules:[…]，保存即生成新版本，旧版本可在版本列表回退。"],
+  ["Change Notes", "变更说明"],
+  ["Cancel", "取消"],
+  ["Save", "保存"],
+  ["☁ Data synced from the cloud goes straight into ", "☁ 云数据同步下来的数据会自动进入"],
+  ["“Data Management”", "「数据管理」"],
+  [": under ", "：在"],
+  [" you can filter by cloud database, and under ", "里可按云数据库筛选，在"],
+  [" you can plot curves directly, which also triggers TAG → alarm → maintenance.", "里可直接出曲线，并同步触发 TAG→报警→维护。"],
+  ["Data Management · Cloud Sync ↗", "数据管理 · 云数据同步 ↗"],
+  ["View Synced Data ↗", "查看已同步的数据 ↗"],
+  ["Data Sources (Site Login)", "数据源(站点登录)"],
+  ["Databases (Download / Refresh)", "数据库(下载/刷新)"],
+  ["Data Continuity", "数据连续性"],
+  ["Enter the vendor cloud platform’s login details and CSS selectors (inspect the login page elements with the browser’s F12 tools). After saving, click “Test Login” to verify; the password is stored encrypted and never shown again.", "填写厂商云平台的登录信息与 CSS 选择器（用浏览器 F12 检查登录页元素获得）。保存后点“测试登录”验证；密码加密存储，不会再显示。"],
+  ["e.g. XX Analyzer Cloud", "如：XX分析仪云平台"],
+  ["Site URL base_url", "站点地址 base_url"],
+  ["Login Page login_url", "登录页 login_url"],
+  ["Account", "账号"],
+  ["Account Field Selector", "账号框选择器"],
+  ["Password Field Selector", "密码框选择器"],
+  ["Login Button Selector", "登录按钮选择器"],
+  ["Login Success Indicator Selector (recommended)", "登录成功标志选择器（建议填）"],
+  ["Save Data Source", "保存数据源"],
+  ["Login Page", "登录页"],
+  ["Last Login", "最近登录"],
+  ["Data Source", "所属数据源"],
+  ["Database Name", "数据库名称"],
+  ["e.g. Analyzer 1 online data", "如：1号分析仪在线数据"],
+  ["Data Page URL list_url", "数据页地址 list_url"],
+  ["Download Button Selector", "下载按钮选择器"],
+  ["File Format", "文件格式"],
+  ["Expected Sampling Interval (min)", "期望采样间隔(分钟)"],
+  ["Device Code Column / Default Device Code", "设备编号列 / 默认设备编号"],
+  ["Column name", "列名"],
+  ["Default code", "默认编号"],
+  ["Component Column / Default Component", "组分列 / 默认组分"],
+  ["Default component", "默认组分"],
+  ["Time Column", "时间列"],
+  ["Leave blank to auto-detect", "留空自动识别"],
+  ["Value Column", "数值列"],
+  ["Auto-refresh Interval (min; blank = manual only)", "自动刷新间隔(分钟，留空=仅手动)"],
+  ["Pre-download Steps (JSON, optional)", "下载前步骤(JSON，可选)"],
+  ["Save Database", "保存数据库"],
+  ["Refresh List", "刷新列表"],
+  ["Rows Imported", "导入行数"],
+  ["Success Rate / Consecutive Failures", "成功率/连续失败"],
+  ["Component name, e.g. O2", "组分名，如 O2"],
+  ["Window (h)", "窗口(小时)"],
+  ["Expected Interval (min)", "期望间隔(分钟)"],
+  ["Check Coverage + Lab Link", "查询覆盖率 + 化验挂钩"],
+  ["Refresh Gap List", "刷新断点列表"],
+  ["Unresolved only", "只看未处理"],
+  ["Gap Start", "断点开始"],
+  ["Gap End", "断点结束"],
+  ["Duration (min)", "时长(分)"],
+  ["Severity", "级别"],
+  ["Alarm", "报警"],
+  ["System Login", "系统登录"],
+  ["Enter username", "请输入用户名"],
+  ["Enter password", "请输入密码"],
+  ["Login", "登录"],
+  ["Role Permissions", "角色权限"],
+  ["Permission", "权限"],
+  ["Admin", "管理员"],
+  ["Operator", "操作员"],
+  ["Maintainer", "维护员"],
+  ["System", "系统"],
+  ["View Dashboard", "查看仪表盘"],
+  ["Manage Devices", "管理设备"],
+  ["AI Diagnosis", "AI诊断"],
+  ["System Settings", "系统设置"],
+  ["User Management", "用户管理"],
+  ["Email", "邮箱"],
+  ["Superuser", "超级管理员"],
+  ["Audit Log (latest 100)", "审计日志（最近 100 条）"],
+  ["User", "用户"],
+  ["Action", "动作"],
+  ["Object", "对象"],
+  ["Details", "详情"],
+  ["Backend Components (real collection; unsupported items are shown as such)", "后台组件（真实采集，不支持项如实显示）"],
+  ["API Endpoint", "API端点"],
+  ["Auto Refresh Interval (seconds)", "自动刷新间隔(秒)"],
+  ["Save Settings", "保存设置"]
+];
+var _i18nIdx = null;
+var _i18nNodes = [];
+function _i18nNorm(s) { return String(s).replace(/\s+/g, ' ').trim(); }
+function _i18nBuildIndex() {
+  var idx = { en: {}, zh: {}, mixed: {} };
+  var cjk = /[\u4e00-\u9fff]/, lat = /[A-Za-z]/;
+  I18N_PAIRS.forEach(function(p) {
+    var e = _i18nNorm(p[0]), z = _i18nNorm(p[1]);
+    if (!idx.en[e]) idx.en[e] = p;
+    if (!idx.zh[z]) idx.zh[z] = p;
+    (p[2] || []).forEach(function(a) {
+      var k = _i18nNorm(a);
+      var bucket = (cjk.test(k) && lat.test(k)) ? idx.mixed : (cjk.test(k) ? idx.zh : idx.en);
+      if (!bucket[k]) bucket[k] = p;
+    });
+  });
+  return idx;
+}
+function _i18nLookup(raw) {
+  var key = _i18nNorm(raw);
+  if (!key) return null;
+  var p = _i18nIdx.mixed[key];
+  if (p) return { en: p[0], zh: p[1] };
+  p = _i18nIdx.en[key];
+  if (p) return { en: key, zh: p[1] };      // 原文是英文：英文保持原样，中文取译文
+  p = _i18nIdx.zh[key];
+  if (p) return { en: p[0], zh: key };      // 原文是中文：中文保持原样，英文取译文
+  return null;
+}
+function _i18nSnapshot() {
+  if (_i18nIdx) return;
+  _i18nIdx = _i18nBuildIndex();
+  var skipTag = { SCRIPT: 1, STYLE: 1, TEXTAREA: 1, NOSCRIPT: 1 };
+  function skipped(el) {
+    for (var n = el; n && n.nodeType === 1; n = n.parentNode) {
+      if (n.hasAttribute('data-i18n') || n.hasAttribute('data-ai-i18n') || n.hasAttribute('data-no-i18n')) return true;
+    }
+    return false;
+  }
+  var walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, null, false);
+  var node;
+  while ((node = walker.nextNode())) {
+    var par = node.parentNode;
+    if (!par || skipTag[par.nodeName] || skipped(par)) continue;
+    // 没有 value 属性的 <option>，其文字本身就是取值（如 #sopType），不能改
+    if (par.nodeName === 'OPTION' && !par.hasAttribute('value')) continue;
+    var hit = _i18nLookup(node.nodeValue);
+    if (!hit) continue;
+    var ws = /^(\s*)[\s\S]*?(\s*)$/.exec(node.nodeValue);
+    _i18nNodes.push({ node: node, lead: ws[1], trail: ws[2], en: hit.en, zh: hit.zh });
+  }
+  document.querySelectorAll('[placeholder],[title]').forEach(function(el) {
+    if (skipped(el)) return;
+    ['placeholder', 'title'].forEach(function(a) {
+      if (!el.hasAttribute(a)) return;
+      var hit = _i18nLookup(el.getAttribute(a));
+      if (hit) _i18nNodes.push({ el: el, attr: a, en: hit.en, zh: hit.zh });
+    });
+  });
+}
+function _i18nApply(lang) {
+  if (!_i18nIdx) return;
+  var zh = (lang === 'zh');
+  _i18nNodes.forEach(function(r) {
+    var txt = zh ? r.zh : r.en;
+    if (r.attr) { r.el.setAttribute(r.attr, txt); return; }
+    if (!r.node.parentNode) return;          // 节点已被页面脚本替换/移除
+    var lead = /^\s/.test(txt) ? '' : r.lead;
+    var trail = /\s$/.test(txt) ? '' : r.trail;
+    r.node.nodeValue = lead + txt + trail;
+  });
+}
+// 切换语言后，当前页里由 JS 生成的表格/提示需要按新语言重画
+function _i18nRerenderDynamic() {
+  try {
+    if (typeof aimsRenderSession === 'function') aimsRenderSession();
+    var ap = document.querySelector('.page.active');
+    if (!ap || !aimsTokens().access) return;
+    if (ap.id === 'page-ext') {
+      loadExtSources();
+      var at = document.querySelector('#page-ext .tc.active');
+      if (at && at.id === 'ext-db') loadExtDatabases();
+      if (at && at.id === 'ext-gap') loadExtGaps();
+    } else if (ap.id === 'page-data') {
+      if (typeof dmLoadCloud === 'function') dmLoadCloud();
+      if (typeof dmLoadImports === 'function') dmLoadImports();
+    }
+  } catch (e) {}
 }
 
 // 启动时恢复上次选择的语言（默认英文，与首次安装一致）
@@ -1384,22 +1862,19 @@ function changeLang(lang) {
   try { saved = localStorage.getItem('aims_lang'); } catch (e) {}
   if (saved && translations[saved]) currentLang = saved;
   document.addEventListener('DOMContentLoaded', function() {
+    _i18nSnapshot();   // 必须赶在任何翻译发生之前拍快照，才能记住每个节点的原文
     if (currentLang !== 'en') changeLang(currentLang);
-    else { var sel = document.getElementById('langSelect'); if (sel) sel.value = 'en'; }
+    else {
+      var sel = document.getElementById('langSelect'); if (sel) sel.value = 'en';
+      _i18nApply('en');   // 页面里写死中文的部分（如云数据页）在英文界面下也要变成英文
+    }
   });
 })();
 
 function updateAllUIText(dict) {
-  var navBtns = document.querySelectorAll('.nav-btn');
-  // 顺序必须与 .nav 里 14 个按钮一一对应（此前漏了 alarm/tpl 两项导致其后整体错位两格）
-  var pageIds = ['dash', 'dev', 'comm', 'alarm', 'data', 'danal', 'ai', 'know', 'tpl',
-                 'maint', 'asset', 'lab', 'ext', 'sys'];
-  navBtns.forEach(function(btn, index) {
-    if (index < pageIds.length) {
-      var titleKey = 'pageTitle_' + pageIds[index];
-      if (dict[titleKey]) btn.textContent = dict[titleKey];
-    }
-  });
+  // 侧栏按钮的文字由 data-i18n（pageTitle_*）逐个驱动，不再按位置映射：
+  // 以前这里用一个写死的 id 数组按序号对应，新增/漏写一项就会整体错位（侧栏出现
+  // 重复的英文 Cloud Data / System 就是这么来的）。
   
   var statLabels = document.querySelectorAll('.stat-card .label');
   if (statLabels[0] && dict.totalDevices) statLabels[0].textContent = dict.totalDevices;
@@ -1451,7 +1926,7 @@ function updateAllUIText(dict) {
 
   
   var kbTabs = document.querySelectorAll('#page-know .tab-btn');
-  if (kbTabs[0] && dict.searchKB) kbTabs[0].textContent = dict.searchKB;
+  if (kbTabs[0]) kbTabs[0].textContent = (dict === translations.zh) ? '搜索' : 'Search';  // 旧代码误用了 searchKB（占位符长句）
   if (kbTabs[1] && dict.upload) kbTabs[1].textContent = dict.upload;
   if (kbTabs[2] && dict.ragChat) kbTabs[2].textContent = dict.ragChat;
   
@@ -1501,125 +1976,8 @@ function updateAllUIText(dict) {
   var saveBtn = document.querySelector('#sys-settings .btn-primary');
   if (saveBtn && dict.saveSettings) saveBtn.textContent = dict.saveSettings;
   
-  var daLabels = document.querySelectorAll('#page-danal .da-label');
-  if (daLabels[0] && currentLang === 'zh') daLabels[0].textContent = '工作表';
-  else if (daLabels[0]) daLabels[0].textContent = 'Worksheet';
-  
-  if (daLabels[1] && currentLang === 'zh') daLabels[1].textContent = 'X轴字段';
-  else if (daLabels[1]) daLabels[1].textContent = 'X Axis Field';
-  
-  if (daLabels[2] && currentLang === 'zh') daLabels[2].textContent = '曲线字段（多选）';
-  else if (daLabels[2]) daLabels[2].textContent = 'Curve Fields (Multi-select)';
-  
-  if (daLabels[3] && currentLang === 'zh') daLabels[3].textContent = '数据处理';
-  else if (daLabels[3]) daLabels[3].textContent = 'Data Processing';
-  
-  if (daLabels[4] && currentLang === 'zh') daLabels[4].textContent = '组分验证';
-  else if (daLabels[4]) daLabels[4].textContent = 'Component Validation';
-  
-  var metricKeys = document.querySelectorAll('.da-metric .k');
-  if (metricKeys[0] && currentLang === 'zh') metricKeys[0].textContent = '文件';
-  else if (metricKeys[0]) metricKeys[0].textContent = 'File';
-  
-  if (metricKeys[1] && currentLang === 'zh') metricKeys[1].textContent = '原始行数';
-  else if (metricKeys[1]) metricKeys[1].textContent = 'Original Rows';
-  
-  if (metricKeys[2] && currentLang === 'zh') metricKeys[2].textContent = '字段';
-  else if (metricKeys[2]) metricKeys[2].textContent = 'Fields';
-  
-  if (metricKeys[3] && currentLang === 'zh') metricKeys[3].textContent = '处理后';
-  else if (metricKeys[3]) metricKeys[3].textContent = 'Processed';
-  
-  var daTabs = document.querySelectorAll('.da-tab');
-  if (daTabs[0] && currentLang === 'zh') daTabs[0].textContent = '曲线';
-  else if (daTabs[0]) daTabs[0].textContent = 'Curve';
-  
-  if (daTabs[1] && currentLang === 'zh') daTabs[1].textContent = '预览';
-  else if (daTabs[1]) daTabs[1].textContent = 'Preview';
-  
-  if (daTabs[2] && currentLang === 'zh') daTabs[2].textContent = '统计';
-  else if (daTabs[2]) daTabs[2].textContent = 'Statistics';
-  
-  if (daTabs[3] && currentLang === 'zh') daTabs[3].textContent = '模式';
-  else if (daTabs[3]) daTabs[3].textContent = 'Schema';
-  
-  var statusEl = document.getElementById('daStatus');
-  if (statusEl && currentLang === 'zh') statusEl.textContent = '请导入Excel文件。';
-  else if (statusEl) statusEl.textContent = 'Please import Excel file.';
-  
-  var daDrop = document.getElementById('daDrop');
-  if (daDrop) {
-    var strong = daDrop.querySelector('strong');
-    if (strong && currentLang === 'zh') strong.textContent = '点击或拖拽Excel文件到此处';
-    else if (strong) strong.textContent = 'Click or drag Excel file here';
-    
-    var span = daDrop.querySelector('span');
-    if (span && currentLang === 'zh') span.textContent = '支持 .xlsx / .xls / .csv 格式';
-    else if (span) span.textContent = 'Supports .xlsx / .xls / .csv';
-    
-    var div = daDrop.querySelector('div:last-child');
-    if (div && currentLang === 'zh') div.textContent = '浏览器安全策略要求点击选择文件';
-    else if (div) div.textContent = 'Browser security requires clicking to select files.';
-  }
-  
-  var searchInput = document.getElementById('daColSearch');
-  if (searchInput && currentLang === 'zh') searchInput.placeholder = '搜索指标...';
-  else if (searchInput) searchInput.placeholder = 'Search indicators...';
-  
-  var selectAllBtn = document.getElementById('daSelectAllBtn');
-  if (selectAllBtn && currentLang === 'zh') selectAllBtn.textContent = '全选数值列';
-  else if (selectAllBtn) selectAllBtn.textContent = 'Select All Numeric';
-  
-  var clearBtn = document.getElementById('daClearBtn');
-  if (clearBtn && currentLang === 'zh') clearBtn.textContent = '清除';
-  else if (clearBtn) clearBtn.textContent = 'Clear';
-  
-  var renderBtn = document.getElementById('daRenderBtn');
-  if (renderBtn && currentLang === 'zh') renderBtn.textContent = '生成曲线';
-  else if (renderBtn) renderBtn.textContent = 'Generate Curves';
-  
-  var exportCsvBtn = document.getElementById('daExportCsvBtn');
-  if (exportCsvBtn && currentLang === 'zh') exportCsvBtn.textContent = '导出CSV';
-  else if (exportCsvBtn) exportCsvBtn.textContent = 'Export CSV';
-  
-  var downloadPngBtn = document.getElementById('daDownloadPngBtn');
-  if (downloadPngBtn && currentLang === 'zh') downloadPngBtn.textContent = '下载图表';
-  else if (downloadPngBtn) downloadPngBtn.textContent = 'Download Chart';
-  
-  var resetBtn = document.getElementById('daResetBtn');
-  if (resetBtn && currentLang === 'zh') resetBtn.textContent = '重置';
-  else if (resetBtn) resetBtn.textContent = 'Reset';
-  
-  var checkLabels = document.querySelectorAll('#page-danal .da-check span');
-  if (checkLabels[0] && currentLang === 'zh') checkLabels[0].textContent = '过滤曲线为空的行';
-  else if (checkLabels[0]) checkLabels[0].textContent = 'Filter empty curve rows';
-  
-  if (checkLabels[1] && currentLang === 'zh') checkLabels[1].textContent = '按X轴排序';
-  else if (checkLabels[1]) checkLabels[1].textContent = 'Sort by X axis';
-  
-  if (checkLabels[2] && currentLang === 'zh') checkLabels[2].textContent = '平滑曲线';
-  else if (checkLabels[2]) checkLabels[2].textContent = 'Smooth curves';
-  
-  if (checkLabels[3] && currentLang === 'zh') checkLabels[3].textContent = '启用组分求和检查';
-  else if (checkLabels[3]) checkLabels[3].textContent = 'Enable component sum check';
-  
-  if (checkLabels[4] && currentLang === 'zh') checkLabels[4].textContent = '仅显示主要组分';
-  else if (checkLabels[4]) checkLabels[4].textContent = 'Show major components only';
-  
-  var timeLabels = document.querySelectorAll('#page-danal .da-section:nth-child(5) .da-label');
-  if (timeLabels[0] && currentLang === 'zh') timeLabels[0].textContent = '开始时间';
-  else if (timeLabels[0]) timeLabels[0].textContent = 'Start Time';
-  
-  if (timeLabels[1] && currentLang === 'zh') timeLabels[1].textContent = '结束时间';
-  else if (timeLabels[1]) timeLabels[1].textContent = 'End Time';
-  
-  var maxPointsLabel = document.querySelector('#page-danal .da-section:nth-child(5) .da-check:nth-child(5) + div .da-label');
-  if (maxPointsLabel && currentLang === 'zh') maxPointsLabel.textContent = '最大点数';
-  else if (maxPointsLabel) maxPointsLabel.textContent = 'Max Points';
-  
-  var typeFilterLabel = document.querySelector('#page-danal .da-section:nth-child(5) .da-check:nth-child(5) + div + div .da-label');
-  if (typeFilterLabel && currentLang === 'zh') typeFilterLabel.textContent = '类型过滤';
-  else if (typeFilterLabel) typeFilterLabel.textContent = 'Type Filter';
+  // 数据分析页的静态文字由 I18N_PAIRS 双向覆盖（此处原有的“只会翻成中文、切回英文不还原”的
+  // 按序号硬编码已删除）。
 }
 
 function updateClock() {
@@ -1637,7 +1995,7 @@ function showPage(id, btn) {
   var page = document.getElementById('page-' + id);
   if (page) page.classList.add('active');
   if (btn) btn.classList.add('active');
-  var titles = {dash:'Dashboard',dev:'Devices',comm:'Comm',alarm:'Alarms · 报警',data:'Data',danal:'Data Analysis',ai:'AI Center',know:'Knowledge',tpl:'Templates · 模板中心',maint:'Maintenance',asset:'Assets',lab:'Lab',ext:'Cloud Data',sys:'System'};
+  var titles = {dash:'Dashboard',dev:'Devices',comm:'Comm',alarm:'Alarms',data:'Data',danal:'Data Analysis',ai:'AI Center',know:'Knowledge',tpl:'Templates',maint:'Maintenance',asset:'Assets',lab:'Lab',ext:'Cloud Data',sys:'System'};
   var _zh = (typeof translations !== 'undefined' && translations[currentLang]) ? translations[currentLang]['pageTitle_' + id] : null;
   document.getElementById('pageTitle').textContent = _zh || titles[id] || id.toUpperCase();
   if (id === 'dash') initHealthChart();
@@ -1746,7 +2104,7 @@ function renderDevices() {
     var sc = d.status==='online'?'tg':d.status==='offline'?'to':d.status==='warning'?'tw':'tr';
     var sn = d.status.charAt(0).toUpperCase()+d.status.slice(1);
     var hc = d.health>=80?'pfg':d.health>=50?'pfy':'pfr';
-    html += '<tr><td>'+escHtml(d.id)+'</td><td>'+escHtml(d.name)+'</td><td>'+escHtml(d.model)+'</td><td>'+escHtml(d.protocol)+'</td><td><span class="tag '+sc+'">'+escHtml(sn)+'</span></td><td><div class="pb"><div class="'+hc+'" style="width:'+d.health+'%"></div></div> '+d.health+'%</td><td><button class="ai-mini" title="Ask AI / 问 AI" onclick="aiOpenForIdx('+i+')">\uD83E\uDD16</button></td></tr>';
+    html += '<tr><td>'+escHtml(d.id)+'</td><td>'+escHtml(d.name)+'</td><td>'+escHtml(d.model)+'</td><td>'+escHtml(d.protocol)+'</td><td><span class="tag '+sc+'">'+escHtml(sn)+'</span></td><td><div class="pb"><div class="'+hc+'" style="width:'+d.health+'%"></div></div> '+d.health+'%</td><td><button class="ai-mini" title="' + L('Ask AI', '问 AI') + '" onclick="aiOpenForIdx('+i+')">\uD83E\uDD16</button></td></tr>';
   });
   tbody.innerHTML = html;
 }
@@ -1845,7 +2203,7 @@ var dmHis = {offset: 0, limit: 50, total: 0, rows: [], external_database_id: nul
 var DM_COLORS = ['#1890ff', '#52c41a', '#faad14', '#f5222d', '#722ed1', '#13c2c2', '#eb2f96', '#fa8c16'];
 
 function dmFmt(t) { return t ? escHtml(String(t).replace('T', ' ').slice(0, 19)) : '-'; }
-function dmSrcTag(src) { return src === 'cloud' ? '<span class="tag tg">☁ 云数据</span>' : '<span class="tag to">本地</span>'; }
+function dmSrcTag(src) { return src === 'cloud' ? '<span class="tag tg">' + L('☁ Cloud', '☁ 云数据') + '</span>' : '<span class="tag to">' + L('Local', '本地') + '</span>'; }
 
 function dmOnEnter() {
   dmLoadDevices().then(function() { dmLoadImports(); });
@@ -1866,7 +2224,7 @@ function dmLoadDevices() {
     var none = '<option value="">No devices — add one first</option>';
     pick('dmImpDev', opts || none);
     pick('dmTrendDev', opts || none);
-    pick('dmHisDev', '<option value="">全部设备</option>' + opts, true);
+    pick('dmHisDev', '<option value="">' + L('All Devices', '全部设备') + '</option>' + opts, true);
     dmLoadComponents();
   }).catch(function() {
     ['dmImpDev', 'dmTrendDev'].forEach(function(id) { var el = document.getElementById(id); if (el) el.innerHTML = '<option value="">Backend unreachable</option>'; });
@@ -1926,7 +2284,7 @@ function dmOpenTrend(deviceId, component) {
 // ---------- 导入 ----------
 function handleFileUpload(input) {
   var dev = document.getElementById('dmImpDev').value;
-  if (!dev) { alert('请先选择目标设备（没有设备请先到「设备管理」添加）'); input.value = ''; return; }
+  if (!dev) { alert(L('Select a target device first (add one under “Devices” if none exist)', '请先选择目标设备（没有设备请先到「设备管理」添加）')); input.value = ''; return; }
   handleTableImport(input, '/measurements/import', 'dmImpStatus', function() { return {device_id: dev}; }, function() {
     dmLoadImports();
   });
@@ -1939,7 +2297,7 @@ function handleFileUpload(input) {
   z.addEventListener('drop', function(e) {
     e.preventDefault(); z.style.borderColor = '';
     if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0]) {
-      try { var dt = new DataTransfer(); dt.items.add(e.dataTransfer.files[0]); inp.files = dt.files; handleFileUpload(inp); } catch (err) { alert('请点击选择文件'); }
+      try { var dt = new DataTransfer(); dt.items.add(e.dataTransfer.files[0]); inp.files = dt.files; handleFileUpload(inp); } catch (err) { alert(L('Please click to choose a file', '请点击选择文件')); }
     }
   });
 })();
@@ -1948,11 +2306,11 @@ var _origRenderImportResult = renderImportResult;
 renderImportResult = function(elId, r) {
   if (elId !== 'dmImpStatus') return _origRenderImportResult(elId, r);
   var el = document.getElementById(elId); if (!el) return;
-  var html = '<div class="alert-item alert-normal"><strong>' + escHtml(r.file_name) + '</strong>：读取 ' + r.row_count + ' 行，入库 ' + r.rows_inserted + ' 个数据点'
-    + '<div style="font-size:12px;color:#666;margin-top:4px">格式：' + escHtml(r.format) + '，时间列：' + escHtml(r.time_column) + '，识别列：' + escHtml((r.columns_detected || []).join(', ')) + '</div>';
+  var html = '<div class="alert-item alert-normal"><strong>' + escHtml(r.file_name) + '</strong>' + L(': read ', '：读取 ') + r.row_count + L(' rows, ', ' 行，入库 ') + r.rows_inserted + L(' data points stored', ' 个数据点')
+    + '<div style="font-size:12px;color:#666;margin-top:4px">' + L('Format: ', '格式：') + escHtml(r.format) + L(', time column: ', '，时间列：') + escHtml(r.time_column) + L(', detected columns: ', '，识别列：') + escHtml((r.columns_detected || []).join(', ')) + '</div>';
   if (r.warnings && r.warnings.length) html += '<div style="font-size:12px;color:#c07a00;margin-top:4px">' + r.warnings.slice(0, 8).map(escHtml).join('<br>') + '</div>';
-  html += '<div style="margin-top:6px"><button class="btn btn-gray" onclick="dmOpenHistory({import_id:' + r.import_id + ',device_id:' + r.device_id + '})">在历史数据中查看</button> '
-    + '<button class="btn btn-gray" onclick="dmOpenTrend(' + r.device_id + ')">看趋势图</button></div></div>';
+  html += '<div style="margin-top:6px"><button class="btn btn-gray" onclick="dmOpenHistory({import_id:' + r.import_id + ',device_id:' + r.device_id + '})">' + L('View in History', '在历史数据中查看') + '</button> '
+    + '<button class="btn btn-gray" onclick="dmOpenTrend(' + r.device_id + ')">' + L('View Trend Chart', '看趋势图') + '</button></div></div>';
   el.innerHTML = html;
 };
 
@@ -1961,15 +2319,15 @@ function dmLoadImports() {
   var src = document.getElementById('dmImpSrc').value;
   aimsFetch('/measurements/imports?limit=50' + (src ? '&source=' + src : '')).then(function(rows) {
     tbody.innerHTML = (rows || []).map(function(r) {
-      var name = r.source === 'cloud' ? '☁ ' + escHtml(r.external_database_name || ('数据库#' + r.external_database_id)) + '<div class="ai-muted">' + escHtml(r.file_name) + '</div>' : escHtml(r.file_name);
+      var name = r.source === 'cloud' ? '☁ ' + escHtml(r.external_database_name || (L('Database #', '数据库#') + r.external_database_id)) + '<div class="ai-muted">' + escHtml(r.file_name) + '</div>' : escHtml(r.file_name);
       var st = '<span class="tag ' + (r.status === 'done' ? 'tg' : r.status === 'failed' ? 'tr' : 'tw') + '">' + escHtml(r.status) + '</span>';
       var arg = "{import_id:" + r.id + (r.device_id ? ',device_id:' + r.device_id : '') + "}";
       return '<tr><td>' + r.id + '</td><td>' + dmSrcTag(r.source) + '</td><td>' + name + '</td><td>' + escHtml(r.device_code || '-')
         + '</td><td>' + r.row_count + '</td><td>' + r.rows_stored + '</td><td>' + st + '</td><td>' + dmFmt(r.created_at)
-        + '</td><td><button class="btn btn-gray" onclick="dmOpenHistory(' + arg + ')">查看数据</button></td></tr>';
-    }).join('') || '<tr><td colspan="9" style="text-align:center;color:#999">暂无导入记录</td></tr>';
+        + '</td><td><button class="btn btn-gray" onclick="dmOpenHistory(' + arg + ')">' + L('View Data', '查看数据') + '</button></td></tr>';
+    }).join('') || '<tr><td colspan="9" style="text-align:center;color:#999">' + L('No import records yet', '暂无导入记录') + '</td></tr>';
   }).catch(function(e) {
-    tbody.innerHTML = '<tr><td colspan="9" style="color:#f5222d">无法连接后端或未登录：' + escHtml(e.message) + '</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="9" style="color:#f5222d">' + t('backendUnreachable') + escHtml(e.message) + '</td></tr>';
   });
 }
 
@@ -1977,13 +2335,13 @@ function dmLoadImports() {
 function dmLoadComponents(preselect) {
   var dev = document.getElementById('dmTrendDev').value;
   var box = document.getElementById('dmTrendComps');
-  if (!dev) { box.innerHTML = '<span class="ai-muted">请先选择设备</span>'; return Promise.resolve(); }
+  if (!dev) { box.innerHTML = '<span class="ai-muted">' + L('Select a device first', '请先选择设备') + '</span>'; return Promise.resolve(); }
   return aimsFetch('/measurements/components?device_id=' + dev).then(function(list) {
     var prev = preselect || Array.prototype.map.call(box.querySelectorAll('input:checked'), function(i) { return i.value; });
     box.innerHTML = (list || []).map(function(c, i) {
       var on = prev.length ? prev.indexOf(c) >= 0 : i < 2;
       return '<label class="da-check" style="margin:0;display:inline-flex;align-items:center;gap:4px"><input type="checkbox" value="' + escHtml(c) + '"' + (on ? ' checked' : '') + '><span>' + escHtml(c) + '</span></label>';
-    }).join('') || '<span class="ai-muted">该设备暂无数据 — 先导入文件，或在「云数据」里同步</span>';
+    }).join('') || '<span class="ai-muted">' + L('No data for this device — import a file first, or sync under “Cloud Data”', '该设备暂无数据 — 先导入文件，或在「云数据」里同步') + '</span>';
   }).catch(function(e) { box.innerHTML = '<span style="color:#f5222d">' + escHtml(e.message) + '</span>'; });
 }
 
@@ -1992,13 +2350,13 @@ function renderTrend() {
   var hours = parseInt(document.getElementById('trendHours').value, 10) || 168;
   var comps = Array.prototype.map.call(document.querySelectorAll('#dmTrendComps input:checked'), function(i) { return i.value; });
   var msg = document.getElementById('dmTrendMsg'), area = document.getElementById('trendChart');
-  if (!dev) { msg.textContent = '请选择设备'; return; }
-  if (!comps.length) { msg.textContent = '请至少勾选一个曲线字段'; return; }
-  msg.textContent = '加载中…';
+  if (!dev) { msg.textContent = L('Select a device', '请选择设备'); return; }
+  if (!comps.length) { msg.textContent = L('Tick at least one curve field', '请至少勾选一个曲线字段'); return; }
+  msg.textContent = L('Loading…', '加载中…');
   var q = '/measurements/trend?device_id=' + dev + '&hours=' + hours + comps.map(function(c) { return '&components=' + encodeURIComponent(c); }).join('');
   aimsFetch(q, {timeout: 20000}).then(function(series) {
     var n = series.reduce(function(a, s) { return a + s.points.length; }, 0);
-    msg.textContent = n ? ('共 ' + n + ' 个数据点') : '所选时间窗口内没有数据（可加大 Hours）';
+    msg.textContent = n ? (L('', '共 ') + n + L(' data points', ' 个数据点')) : L('No data in the selected time window (try a larger Hours value)', '所选时间窗口内没有数据（可加大 Hours）');
     area.innerHTML = dmTrendSvg(series);
   }).catch(function(e) { msg.textContent = ''; area.innerHTML = '<span style="color:#f5222d">' + escHtml(e.message) + '</span>'; });
 }
@@ -2008,7 +2366,7 @@ function dmTrendSvg(series) {
   var W = 900, H = 340, L = 56, R = 16, T = 16, B = 34;
   var all = [];
   series.forEach(function(s) { s.points.forEach(function(p) { all.push({t: new Date(p.time).getTime(), v: p.value}); }); });
-  if (!all.length) return '<div class="ai-muted" style="padding:40px;text-align:center">没有数据</div>';
+  if (!all.length) return '<div class="ai-muted" style="padding:40px;text-align:center">' + L('No data', '没有数据') + '</div>';
   var tmin = Math.min.apply(null, all.map(function(a) { return a.t; })), tmax = Math.max.apply(null, all.map(function(a) { return a.t; }));
   var vmin = Math.min.apply(null, all.map(function(a) { return a.v; })), vmax = Math.max.apply(null, all.map(function(a) { return a.v; }));
   if (tmax === tmin) tmax = tmin + 1; if (vmax === vmin) { vmax += 1; vmin -= 1; }
@@ -2056,17 +2414,17 @@ function dmLoadHistory(offset) {
   if (st) q += '&start=' + encodeURIComponent(new Date(st).toISOString());
   if (en) q += '&end=' + encodeURIComponent(new Date(en).toISOString());
   var chip = document.getElementById('dmHisChip');
-  var f = dmHis.external_database_id ? ('云数据库 ' + (dmHis.label || '#' + dmHis.external_database_id)) : dmHis.import_id ? ('导入批次 ' + (dmHis.label || '#' + dmHis.import_id)) : '';
-  chip.innerHTML = f ? '<span class="tag tg">筛选：' + escHtml(f) + '</span> <button class="btn btn-link" onclick="dmClearHisFilter()">清除</button>' : '';
-  tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:#999">加载中…</td></tr>';
+  var f = dmHis.external_database_id ? (L('Cloud DB ', '云数据库 ') + (dmHis.label || '#' + dmHis.external_database_id)) : dmHis.import_id ? (L('Import batch ', '导入批次 ') + (dmHis.label || '#' + dmHis.import_id)) : '';
+  chip.innerHTML = f ? '<span class="tag tg">' + L('Filter: ', '筛选：') + escHtml(f) + '</span> <button class="btn btn-link" onclick="dmClearHisFilter()">' + L('Clear', '清除') + '</button>' : '';
+  tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:#999">' + L('Loading…', '加载中…') + '</td></tr>';
   aimsFetch(q, {timeout: 20000}).then(function(page) {
     dmHis.offset = page.offset; dmHis.total = page.total; dmHis.rows = page.items;
     tbody.innerHTML = page.items.map(function(r) {
       return '<tr><td>' + dmFmt(r.time) + '</td><td>' + escHtml(r.device_code || ('#' + r.device_id)) + '</td><td>' + escHtml(r.component_name) + '</td><td>' + r.value
         + '</td><td>' + escHtml(r.quality) + '</td><td>' + dmSrcTag(r.source) + '</td><td>' + escHtml(r.source_name || '-') + '</td></tr>';
-    }).join('') || '<tr><td colspan="7" style="text-align:center;color:#999">没有符合条件的数据</td></tr>';
+    }).join('') || '<tr><td colspan="7" style="text-align:center;color:#999">' + L('No matching data', '没有符合条件的数据') + '</td></tr>';
     var from = page.total ? page.offset + 1 : 0, to = Math.min(page.offset + page.limit, page.total);
-    document.getElementById('dmHisInfo').textContent = '第 ' + from + '–' + to + ' 条，共 ' + page.total + ' 条';
+    document.getElementById('dmHisInfo').textContent = tf('dmPageInfo', from, to, page.total);
     document.getElementById('dmHisPrev').disabled = page.offset <= 0;
     document.getElementById('dmHisNext').disabled = page.offset + page.limit >= page.total;
   }).catch(function(e) { tbody.innerHTML = '<tr><td colspan="7" style="color:#f5222d">' + escHtml(e.message) + '</td></tr>'; });
@@ -2074,7 +2432,7 @@ function dmLoadHistory(offset) {
 function dmClearHisFilter() { dmHis.external_database_id = null; dmHis.import_id = null; dmHis.label = ''; dmLoadHistory(0); }
 
 function dmExportHistory() {
-  if (!dmHis.rows.length) { alert('当前页没有数据'); return; }
+  if (!dmHis.rows.length) { alert(L('No data on this page', '当前页没有数据')); return; }
   var lines = ['time,device,component,value,quality,source,source_name'].concat(dmHis.rows.map(function(r) {
     return [r.time, r.device_code || r.device_id, r.component_name, r.value, r.quality, r.source, r.source_name || ''].map(function(v) { return '"' + String(v).replace(/"/g, '""') + '"'; }).join(',');
   }));
@@ -2093,17 +2451,17 @@ function dmLoadCloud() {
     var dbs = res[0] || [], stored = {};
     (res[1] || []).forEach(function(b) { if (b.external_database_id != null) stored[b.external_database_id] = (stored[b.external_database_id] || 0) + b.rows_stored; });
     tbody.innerHTML = dbs.map(function(r) {
-      var auto = r.auto_refresh_enabled && r.refresh_interval_minutes ? '每 ' + r.refresh_interval_minutes + ' 分钟' : '仅手动';
+      var auto = r.auto_refresh_enabled && r.refresh_interval_minutes ? L('Every ', '每 ') + r.refresh_interval_minutes + L(' min', ' 分钟') : L('Manual only', '仅手动');
       dmCloudNames[r.id] = r.name;
       var arg = "{external_database_id:" + r.id + "}";
       return '<tr><td>' + r.id + '</td><td>' + escHtml(r.name) + '</td><td>' + extTag(r.last_status)
         + (r.last_error ? '<div class="ai-muted" style="max-width:260px">' + escHtml(r.last_error).slice(0, 140) + '</div>' : '')
         + '</td><td>' + extFmt(r.last_synced_at) + '</td><td>' + r.last_rows_imported + '</td><td>' + (stored[r.id] || 0) + '</td><td>' + auto
-        + '</td><td><button class="btn btn-success" onclick="cloudSync(' + r.id + ',this,\'dmCloudMsg\')">立即同步</button> '
-        + '<button class="btn btn-gray" onclick="dmOpenHistory(' + arg + ')">查看数据</button></td></tr>';
-    }).join('') || '<tr><td colspan="8" style="text-align:center;color:#999">尚未配置云数据库 — 点右上角「配置云数据源」</td></tr>';
+        + '</td><td><button class="btn btn-success" onclick="cloudSync(' + r.id + ',this,\'dmCloudMsg\')">' + L('Sync Now', '立即同步') + '</button> '
+        + '<button class="btn btn-gray" onclick="dmOpenHistory(' + arg + ')">' + L('View Data', '查看数据') + '</button></td></tr>';
+    }).join('') || '<tr><td colspan="8" style="text-align:center;color:#999">' + L('No cloud databases configured yet — click “Configure Cloud Sources” at the top right', '尚未配置云数据库 — 点右上角「配置云数据源」') + '</td></tr>';
   }).catch(function(e) {
-    tbody.innerHTML = '<tr><td colspan="8" style="color:#f5222d">无法连接后端或未登录：' + escHtml(e.message) + '</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="8" style="color:#f5222d">' + t('backendUnreachable') + escHtml(e.message) + '</td></tr>';
   });
 }
 
@@ -2640,7 +2998,7 @@ function runPrediction() {
   if (!comp) { out.innerHTML = '<div class="alert-item alert-warning">' + escHtml(tt('noTag')) + '</div>'; return; }
   if (d.id == null) {
     out.innerHTML = '<div class="alert-item alert-warning"><strong>' + escHtml(d.device_code) + '</strong> - ' + escHtml(comp)
-      + '：未连接后端（无设备ID），无法计算剩余寿命。' + aiDemoNote() + '</div>';
+      + L(': Backend not connected (no device ID); cannot calculate remaining life.', '：未连接后端（无设备ID），无法计算剩余寿命。') + aiDemoNote() + '</div>';
     return;
   }
   out.innerHTML = '<div class="ai-muted">' + escHtml(tt('loading')) + '</div>';
@@ -2679,7 +3037,7 @@ function runHealth() {
       + (rows ? '<div style="max-width:420px;margin:0 auto">' + rows + '</div>' : '') + (demo ? aiDemoNote() : '');
   }
   if (d.id == null) {
-    out.innerHTML = '<div class="alert-item alert-warning">未连接后端（无设备ID），无法计算健康度。' + aiDemoNote() + '</div>';
+    out.innerHTML = '<div class="alert-item alert-warning">' + L('Backend not connected (no device ID); cannot calculate the health score.', '未连接后端（无设备ID），无法计算健康度。') + aiDemoNote() + '</div>';
     return;
   }
   out.innerHTML = '<div class="ai-muted">' + escHtml(tt('loading')) + '</div>';
@@ -3212,16 +3570,16 @@ function sendChat() {
       // The backend answered, but with an error — show the real reason instead of
       // pretending the server is down (which made a 401 / 5xx look like "model unavailable").
       if (status === 401) {
-        reply = '未登录或登录已过期，请先到 系统 → 登录 后再使用 AI 对话。(HTTP 401)';
+        reply = L('Not signed in, or your session has expired. Please sign in under System → Login before using AI chat. (HTTP 401)', '未登录或登录已过期，请先到 系统设置 → 登录 后再使用 AI 对话。(HTTP 401)');
       } else if (status === 429) {
-        reply = '请求过于频繁，请稍后再试。(HTTP 429)';
+        reply = L('Too many requests. Please try again later. (HTTP 429)', '请求过于频繁，请稍后再试。(HTTP 429)');
       } else {
-        reply = 'AI 对话请求失败（HTTP ' + status + '）：' + msg;
+        reply = L('AI chat request failed (HTTP ', 'AI 对话请求失败（HTTP ') + status + L('): ', '）：') + msg;
       }
     } else if (err && err.name === 'AbortError') {
-      reply = '本地模型响应超时（>180 秒）。小模型/CPU 环境下首次加载较慢，请稍后重试，或在 模型下载 页换更小的模型。';
+      reply = L('The local model timed out (>180 s). The first load is slow on small models / CPU-only machines; retry shortly, or pick a smaller model on the Models tab.', '本地模型响应超时（>180 秒）。小模型/CPU 环境下首次加载较慢，请稍后重试，或在“模型下载”页换更小的模型。');
     } else {
-      reply = '无法连接后端：' + msg;
+      reply = L('Cannot reach the backend: ', '无法连接后端：') + msg;
     }
     if (pending) { pending.removeAttribute('id'); pending.textContent = reply; }
     box.scrollTop = box.scrollHeight;
@@ -3242,7 +3600,7 @@ function loadChatModelOptions() {
     if (downloaded.length === 0) {
       sel.innerHTML = '<option value="">No local model downloaded yet</option>';
       sel.disabled = true;
-      hint.textContent = 'No local LLM has been downloaded yet — go to the 模型下载 tab to download one, or without one this chat falls back to rule-based/offline replies.';
+      hint.textContent = L('No local LLM has been downloaded yet — go to the Models tab to download one, or without one this chat falls back to rule-based/offline replies.', '尚未下载本地大模型——请到“模型下载”页下载一个；没有模型时，对话会回退为规则/离线回复。');
       return;
     }
     sel.disabled = false;
@@ -3665,7 +4023,7 @@ function loadKnowledgeDocsFromDatabase() {
   if (!el) return;
   aimsFetch('/knowledge/documents?limit=50').then(function(rows) {
     if (!Array.isArray(rows)) return;
-    el.innerHTML = '<div style="font-size:13px;color:#999;margin-bottom:8px">已导入文档（共' + rows.length + '篇）：</div>'
+    el.innerHTML = '<div style="font-size:13px;color:#999;margin-bottom:8px">' + L('Imported documents (', '已导入文档（共') + rows.length + L('):', '篇）：') + '</div>'
       + rows.map(function(d) {
           return '<div class="knowledge-item"><h4>' + d.title + '</h4><p style="color:#999;font-size:12px">' + (d.doc_type || '-') + ' · ' + (d.status || '') + '</p></div>';
         }).join('');
@@ -3684,13 +4042,13 @@ function handleFaultPdf(input) {
   var file = input.files[0];
   if (!file) return;
   var box = document.getElementById('pdfAnalysis');
-  box.innerHTML = '<div class="ai-muted">正在解析 PDF…（' + escHtml(file.name) + '）</div>';
+  box.innerHTML = '<div class="ai-muted">' + L('Parsing PDF… (', '正在解析 PDF…（') + escHtml(file.name) + L(')', '）') + '</div>';
   aimsUpload('/maintenance/fault-pdf/analyze', file).then(function(r) {
     var html = '';
-    html += '<div class="alert-item alert-normal"><strong>' + escHtml(r.filename) + '</strong> — 共 ' + r.pages + ' 页，提取文本 ' + r.chars + ' 字符'
-      + (r.tags && r.tags.length ? ' · 位号: ' + r.tags.map(escHtml).join(', ') : '') + '</div>';
+    html += '<div class="alert-item alert-normal"><strong>' + escHtml(r.filename) + '</strong> — ' + L('', '共 ') + r.pages + L(' pages, ', ' 页，提取文本 ') + r.chars + L(' characters extracted', ' 字符')
+      + (r.tags && r.tags.length ? L(' · Tags: ', ' · 位号: ') + r.tags.map(escHtml).join(', ') : '') + '</div>';
     if (r.patterns && r.patterns.length) {
-      html += '<div class="table-wrap" style="margin-top:12px"><table><thead><tr><th>命中行</th><th>关键词</th><th>报警码</th><th>测量值</th></tr></thead><tbody>'
+      html += '<div class="table-wrap" style="margin-top:12px"><table><thead><tr><th>' + L('Matched Line', '命中行') + '</th><th>' + L('Keyword', '关键词') + '</th><th>' + L('Alarm Code', '报警码') + '</th><th>' + L('Measured Value', '测量值') + '</th></tr></thead><tbody>'
         + r.patterns.map(function(p) {
             return '<tr><td style="max-width:380px;word-break:break-all">' + escHtml(p.line) + '</td>'
               + '<td>' + (p.keywords || []).map(function(k){return '<span class="tag tw">' + escHtml(k) + '</span>';}).join(' ') + '</td>'
@@ -3698,10 +4056,10 @@ function handleFaultPdf(input) {
               + '<td>' + escHtml((p.values || []).join(', ') || '-') + '</td></tr>';
           }).join('') + '</tbody></table></div>';
     } else {
-      html += '<div class="alert-item alert-warning" style="margin-top:12px">未在文本中匹配到故障关键词（文本已提取，但可能不是故障报告）</div>';
+      html += '<div class="alert-item alert-warning" style="margin-top:12px">' + L('No fault keywords matched (text was extracted, but this may not be a fault report)', '未在文本中匹配到故障关键词（文本已提取，但可能不是故障报告）') + '</div>';
     }
     if (r.diagnosis_suggestions && r.diagnosis_suggestions.length) {
-      html += '<h4 style="margin:16px 0 8px">候选诊断（规则包建议，仅供参考）</h4>';
+      html += '<h4 style="margin:16px 0 8px">' + L('Candidate diagnoses (rule-pack suggestions, for reference only)', '候选诊断（规则包建议，仅供参考）') + '</h4>';
       html += r.diagnosis_suggestions.map(function(d) {
         var rule = d.rule || {};
         var txt = rule.diagnosis || rule.summary || rule.advice || JSON.stringify(rule).slice(0, 300);
@@ -3713,12 +4071,12 @@ function handleFaultPdf(input) {
     }
     html += '<div style="font-size:12px;color:#999;margin-top:10px">' + escHtml(r.note || '') + '</div>';
     if (r.text_excerpt) {
-      html += '<details style="margin-top:10px"><summary style="cursor:pointer;font-size:12px;color:#666">查看提取的文本（前 4000 字符）</summary>'
+      html += '<details style="margin-top:10px"><summary style="cursor:pointer;font-size:12px;color:#666">' + L('View extracted text (first 4000 characters)', '查看提取的文本（前 4000 字符）') + '</summary>'
         + '<pre style="white-space:pre-wrap;font-size:12px;background:#fafafa;padding:10px;border-radius:6px;max-height:320px;overflow:auto">' + escHtml(r.text_excerpt) + '</pre></details>';
     }
     box.innerHTML = html;
   }).catch(function(e) {
-    box.innerHTML = '<div class="alert-item alert-critical">解析失败：' + escHtml(e.message || e) + '</div>';
+    box.innerHTML = '<div class="alert-item alert-critical">' + L('Parsing failed: ', '解析失败：') + escHtml(e.message || e) + '</div>';
   });
 }
 
@@ -3816,13 +4174,13 @@ function loadExtSources() {
       return '<tr><td>' + r.id + '</td><td>' + escHtml(r.name) + '</td><td>' + escHtml(r.login_url) + '</td><td>' + escHtml(r.username)
         + '</td><td>' + extTag(r.status) + (r.last_error ? '<div class="ai-muted" style="max-width:280px">' + escHtml(r.last_error).slice(0, 160) + '</div>' : '')
         + '</td><td>' + extFmt(r.last_login_at) + '</td><td>'
-        + '<button class="btn btn-gray" onclick="extTestLogin(' + r.id + ',this)">测试登录</button> '
-        + '<button class="btn btn-danger" onclick="extDelete(\'/external/sources/' + r.id + '\',loadExtSources)">删除</button></td></tr>';
-    }).join('') || '<tr><td colspan="7" style="text-align:center;color:#999">尚未配置数据源</td></tr>';
+        + '<button class="btn btn-gray" onclick="extTestLogin(' + r.id + ',this)">' + L('Test Login', '测试登录') + '</button> '
+        + '<button class="btn btn-danger" onclick="extDelete(\'/external/sources/' + r.id + '\',loadExtSources)">' + L('Delete', '删除') + '</button></td></tr>';
+    }).join('') || '<tr><td colspan="7" style="text-align:center;color:#999">' + L('No data sources configured yet', '尚未配置数据源') + '</td></tr>';
     var sel = document.getElementById('extDbSrc');
     if (sel) sel.innerHTML = extSources.map(function(r) { return '<option value="' + r.id + '">' + escHtml(r.name) + '</option>'; }).join('');
   }).catch(function(e) {
-    tbody.innerHTML = '<tr><td colspan="7" style="color:#f5222d">无法连接后端或未登录：' + escHtml(e.message) + '</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="7" style="color:#f5222d">' + t('backendUnreachable') + escHtml(e.message) + '</td></tr>';
   });
 }
 
@@ -3830,7 +4188,7 @@ function extCreateSource() {
   var g = function(id) { return document.getElementById(id).value.trim(); };
   var msg = document.getElementById('extSrcMsg');
   if (!g('extSrcName') || !g('extSrcLogin') || !g('extSrcUser') || !document.getElementById('extSrcPass').value) {
-    msg.textContent = '名称、登录页、账号、密码必填'; return;
+    msg.textContent = L('Name, login page, account and password are required', '名称、登录页、账号、密码必填'); return;
   }
   aimsFetch('/external/sources', {method: 'POST', body: JSON.stringify({
     name: g('extSrcName'), base_url: g('extSrcBase') || g('extSrcLogin'), login_url: g('extSrcLogin'),
@@ -3838,21 +4196,21 @@ function extCreateSource() {
     username_selector: g('extSrcUsel'), password_selector: g('extSrcPsel'), submit_selector: g('extSrcSsel'),
     login_success_selector: g('extSrcOk') || null
   })}).then(function() {
-    msg.textContent = '已保存'; document.getElementById('extSrcPass').value = ''; loadExtSources();
-  }).catch(function(e) { msg.textContent = '保存失败：' + e.message; });
+    msg.textContent = L('Saved', '已保存'); document.getElementById('extSrcPass').value = ''; loadExtSources();
+  }).catch(function(e) { msg.textContent = L('Save failed: ', '保存失败：') + e.message; });
 }
 
 function extTestLogin(id, btn) {
-  btn.disabled = true; btn.textContent = '登录中…';
+  btn.disabled = true; btn.textContent = L('Signing in…', '登录中…');
   aimsFetch('/external/sources/' + id + '/test-login', {method: 'POST', timeout: 90000})
-    .then(function(r) { alert(r.message || '登录成功'); })
-    .catch(function(e) { alert('登录失败：' + e.message); })
+    .then(function(r) { alert(r.message || L('Login successful', '登录成功')); })
+    .catch(function(e) { alert(L('Login failed: ', '登录失败：') + e.message); })
     .then(function() { loadExtSources(); });
 }
 
 function extDelete(path, done) {
-  if (!confirm('确定删除？关联的数据库配置也会一并删除（已导入的测量数据不受影响）。')) return;
-  aimsFetch(path, {method: 'DELETE'}).then(function() { done(); }).catch(function(e) { alert('删除失败：' + e.message); });
+  if (!confirm(L('Delete this item? Linked database configurations are deleted too (already-imported measurements are kept).', '确定删除？关联的数据库配置也会一并删除（已导入的测量数据不受影响）。'))) return;
+  aimsFetch(path, {method: 'DELETE'}).then(function() { done(); }).catch(function(e) { alert(L('Delete failed: ', '删除失败：') + e.message); });
 }
 
 function extCreateDatabase() {
@@ -3860,10 +4218,10 @@ function extCreateDatabase() {
   var msg = document.getElementById('extDbMsg');
   var steps = null;
   if (g('extDbSteps')) {
-    try { steps = JSON.parse(g('extDbSteps')); } catch (e) { msg.textContent = '下载前步骤不是合法 JSON'; return; }
+    try { steps = JSON.parse(g('extDbSteps')); } catch (e) { msg.textContent = L('Pre-download steps are not valid JSON', '下载前步骤不是合法 JSON'); return; }
   }
   var src = document.getElementById('extDbSrc').value;
-  if (!src || !g('extDbName') || !g('extDbUrl')) { msg.textContent = '请先建数据源，并填写名称和数据页地址'; return; }
+  if (!src || !g('extDbName') || !g('extDbUrl')) { msg.textContent = L('Create a data source first, then fill in the name and data page URL', '请先建数据源，并填写名称和数据页地址'); return; }
   var interval = g('extDbInt') ? parseInt(g('extDbInt'), 10) : null;
   aimsFetch('/external/databases', {method: 'POST', body: JSON.stringify({
     source_id: parseInt(src, 10), name: g('extDbName'), list_url: g('extDbUrl'), download_selector: g('extDbDl') || 'text=下载',
@@ -3873,8 +4231,8 @@ function extCreateDatabase() {
     time_column: g('extDbTimeCol'), value_column: g('extDbValCol'),
     expected_interval_minutes: parseInt(document.getElementById('extDbExp').value, 10) || 60,
     auto_refresh_enabled: !!interval, refresh_interval_minutes: interval
-  })}).then(function() { msg.textContent = '已保存'; loadExtDatabases(); })
-    .catch(function(e) { msg.textContent = '保存失败：' + e.message; });
+  })}).then(function() { msg.textContent = L('Saved', '已保存'); loadExtDatabases(); })
+    .catch(function(e) { msg.textContent = L('Save failed: ', '保存失败：') + e.message; });
 }
 
 function loadExtDatabases() {
@@ -3889,16 +4247,16 @@ function loadExtDatabases() {
     tbody.innerHTML = rows.map(function(r) {
       var h = r._h;
       var health = h ? ((h.success_rate_pct != null ? h.success_rate_pct + '%' : '-') + ' / ' + h.consecutive_failures
-        + (h.unresolved_gaps ? ' <span class="tag tw">' + h.unresolved_gaps + ' 断点</span>' : '')) : '-';
-      var auto = r.auto_refresh_enabled && r.refresh_interval_minutes ? '每 ' + r.refresh_interval_minutes + ' 分钟' : '仅手动';
+        + (h.unresolved_gaps ? ' <span class="tag tw">' + h.unresolved_gaps + L(' gaps', ' 个断点') + '</span>' : '')) : '-';
+      var auto = r.auto_refresh_enabled && r.refresh_interval_minutes ? L('Every ', '每 ') + r.refresh_interval_minutes + L(' min', ' 分钟') : L('Manual only', '仅手动');
       return '<tr><td>' + r.id + '</td><td>' + escHtml(r.name) + '</td><td>' + extTag(r.last_status)
         + (r.last_error ? '<div class="ai-muted" style="max-width:260px">' + escHtml(r.last_error).slice(0, 140) + '</div>' : '')
         + '</td><td>' + extFmt(r.last_synced_at) + '</td><td>' + r.last_rows_imported + '</td><td>' + auto + '</td><td>' + health
-        + '</td><td><button class="btn btn-success" onclick="extRefresh(' + r.id + ',this)">刷新</button> '
-        + '<button class="btn btn-gray" onclick="extShowLogs(' + r.id + ')">日志</button> '
-        + '<button class="btn btn-gray" onclick="dmOpenHistory({external_database_id:' + r.id + '})">在数据管理中查看</button> '
-        + '<button class="btn btn-danger" onclick="extDelete(\'/external/databases/' + r.id + '\',loadExtDatabases)">删除</button></td></tr>';
-    }).join('') || '<tr><td colspan="8" style="text-align:center;color:#999">尚未配置数据库</td></tr>';
+        + '</td><td><button class="btn btn-success" onclick="extRefresh(' + r.id + ',this)">' + L('Refresh', '刷新') + '</button> '
+        + '<button class="btn btn-gray" onclick="extShowLogs(' + r.id + ')">' + L('Logs', '日志') + '</button> '
+        + '<button class="btn btn-gray" onclick="dmOpenHistory({external_database_id:' + r.id + '})">' + L('View in Data Management', '在数据管理中查看') + '</button> '
+        + '<button class="btn btn-danger" onclick="extDelete(\'/external/databases/' + r.id + '\',loadExtDatabases)">' + L('Delete', '删除') + '</button></td></tr>';
+    }).join('') || '<tr><td colspan="8" style="text-align:center;color:#999">' + L('No databases configured yet', '尚未配置数据库') + '</td></tr>';
   }).catch(function(e) {
     tbody.innerHTML = '<tr><td colspan="8" style="color:#f5222d">' + escHtml(e.message) + '</td></tr>';
   });
@@ -3908,13 +4266,14 @@ function loadExtDatabases() {
 function cloudSync(id, btn, msgId) {
   var msg = document.getElementById(msgId || 'extRefreshMsg');
   var label = btn.textContent;
-  btn.disabled = true; btn.textContent = '同步中…';
-  msg.textContent = '正在登录并下载，站点较慢时可能需要一分钟左右…';
+  btn.disabled = true; btn.textContent = L('Syncing…', '同步中…');
+  msg.textContent = L('Signing in and downloading; slow sites may take up to a minute…', '正在登录并下载，站点较慢时可能需要一分钟左右…');
   aimsFetch('/external/databases/' + id + '/refresh', {method: 'POST', timeout: 180000}).then(function(r) {
     msg.textContent = r.status === 'success'
-      ? '完成：下载 ' + r.rows_downloaded + ' 行，新增 ' + r.rows_imported + ' 行，发现断点 ' + r.gaps_found + ' 个' + (r.error_message ? '（' + r.error_message + '）' : '') + ' — 数据已进入「数据管理」'
-      : '失败：' + (r.error_message || '未知错误');
-  }).catch(function(e) { msg.textContent = '请求失败：' + e.message; })
+      ? tf('cloudSyncDone', r.rows_downloaded, r.rows_imported, r.gaps_found,
+          r.error_message ? (currentLang === 'zh' ? '（' + r.error_message + '）' : ' (' + r.error_message + ')') : '')
+      : tf('cloudSyncFailed', r.error_message || t('unknownError'));
+  }).catch(function(e) { msg.textContent = L('Request failed: ', '请求失败：') + e.message; })
     .then(function() {
       btn.disabled = false; btn.textContent = label;
       loadExtDatabases();
@@ -3926,11 +4285,13 @@ function extRefresh(id, btn) { cloudSync(id, btn, 'extRefreshMsg'); }
 function extShowLogs(id) {
   var box = document.getElementById('extLogBox');
   aimsFetch('/external/databases/' + id + '/logs?limit=20').then(function(rows) {
-    box.innerHTML = '<h4 style="margin:0 0 8px">数据库 #' + id + ' 最近抓取记录</h4><div class="table-wrap"><table><thead><tr><th>开始</th><th>触发</th><th>状态</th><th>文件</th><th>下载/导入</th><th>断点</th><th>信息</th></tr></thead><tbody>'
+    box.innerHTML = '<h4 style="margin:0 0 8px">' + L('Database #' + id + ' — recent fetch logs', '数据库 #' + id + ' 最近抓取记录') + '</h4><div class="table-wrap"><table><thead><tr><th>'
+      + [L('Start', '开始'), L('Trigger', '触发'), L('Status', '状态'), L('File', '文件'), L('Downloaded / Imported', '下载/导入'), L('Gaps', '断点'), L('Message', '信息')].join('</th><th>')
+      + '</th></tr></thead><tbody>'
       + (rows.map(function(l) {
         return '<tr><td>' + extFmt(l.started_at) + '</td><td>' + escHtml(l.triggered_by) + '</td><td>' + extTag(l.status) + '</td><td>' + escHtml(l.file_name || '-')
           + '</td><td>' + l.rows_downloaded + ' / ' + l.rows_imported + '</td><td>' + l.gaps_found + '</td><td>' + escHtml((l.error_message || '').slice(0, 200)) + '</td></tr>';
-      }).join('') || '<tr><td colspan="7" style="text-align:center;color:#999">暂无记录</td></tr>') + '</tbody></table></div>';
+      }).join('') || '<tr><td colspan="7" style="text-align:center;color:#999">' + L('No records yet', '暂无记录') + '</td></tr>') + '</tbody></table></div>';
   }).catch(function(e) { box.textContent = e.message; });
 }
 
@@ -3938,7 +4299,7 @@ function extFillDeviceSelect() {
   var sel = document.getElementById('extGapDev');
   if (sel.options.length) return;
   aimsFetch('/devices?limit=200').then(function(rows) {
-    sel.innerHTML = '<option value="">全部设备</option>' + (rows || []).map(function(d) {
+    sel.innerHTML = '<option value="">' + L('All Devices', '全部设备') + '</option>' + (rows || []).map(function(d) {
       return '<option value="' + d.id + '">' + escHtml(d.device_code) + ' ' + escHtml(d.name) + '</option>';
     }).join('');
   }).catch(function() {});
@@ -3953,10 +4314,10 @@ function loadExtGaps() {
   aimsFetch(q).then(function(rows) {
     tbody.innerHTML = rows.map(function(g) {
       var cls = g.severity === 'critical' ? 'tr' : g.severity === 'warning' ? 'tw' : 'to';
-      return '<tr><td>' + aiDevLink(g.device_id) + '</td><td>' + escHtml(g.component_name) + ' <a href="#" class="ai-link" data-comp="' + escHtml(g.component_name) + '" onclick="dmOpenTrend(' + g.device_id + ',this.dataset.comp);return false">看趋势 ↗</a></td><td>' + extFmt(g.gap_start) + '</td><td>' + extFmt(g.gap_end)
+      return '<tr><td>' + aiDevLink(g.device_id) + '</td><td>' + escHtml(g.component_name) + ' <a href="#" class="ai-link" data-comp="' + escHtml(g.component_name) + '" onclick="dmOpenTrend(' + g.device_id + ',this.dataset.comp);return false">' + L('View Trend ↗', '看趋势 ↗') + '</a></td><td>' + extFmt(g.gap_start) + '</td><td>' + extFmt(g.gap_end)
         + '</td><td>' + Math.round(g.gap_minutes) + '</td><td><span class="tag ' + cls + '">' + g.severity + '</span></td><td>' + (g.alarm_id ? '#' + g.alarm_id : '-')
-        + '</td><td>' + (g.resolved ? '已处理' : '<button class="btn btn-gray" onclick="extResolveGap(' + g.id + ')">标记已处理</button>') + '</td></tr>';
-    }).join('') || '<tr><td colspan="8" style="text-align:center;color:#999">没有断点记录</td></tr>';
+        + '</td><td>' + (g.resolved ? L('Resolved', '已处理') : '<button class="btn btn-gray" onclick="extResolveGap(' + g.id + ')">' + L('Mark Resolved', '标记已处理') + '</button>') + '</td></tr>';
+    }).join('') || '<tr><td colspan="8" style="text-align:center;color:#999">' + L('No gap records', '没有断点记录') + '</td></tr>';
   }).catch(function(e) { tbody.innerHTML = '<tr><td colspan="8" style="color:#f5222d">' + escHtml(e.message) + '</td></tr>'; });
 }
 
@@ -3968,7 +4329,7 @@ function extLoadCoverage() {
   var box = document.getElementById('extCovBox');
   var dev = document.getElementById('extGapDev').value;
   var comp = document.getElementById('extGapComp').value.trim();
-  if (!dev || !comp) { box.innerHTML = '<span class="ai-muted">请选择具体设备并填写组分名</span>'; return; }
+  if (!dev || !comp) { box.innerHTML = '<span class="ai-muted">' + L('Pick a specific device and enter a component name', '请选择具体设备并填写组分名') + '</span>'; return; }
   var hours = document.getElementById('extGapHours').value || 168;
   var exp = document.getElementById('extGapExp').value || 60;
   Promise.all([
@@ -3977,16 +4338,16 @@ function extLoadCoverage() {
   ]).then(function(r) {
     var c = r[0], l = r[1];
     var bar = c.coverage_pct >= 95 ? 'pfg' : c.coverage_pct >= 70 ? 'pfy' : 'pfr';
-    var html = '<div class="stat-card" style="margin-bottom:8px"><div class="label">数据覆盖率（近 ' + c.window_hours + ' 小时，期望 ' + c.expected_points + ' 点，实际 ' + c.actual_points + ' 点）</div>'
+    var html = '<div class="stat-card" style="margin-bottom:8px"><div class="label">' + tf('extCoverageLabel', c.window_hours, c.expected_points, c.actual_points) + '</div>'
       + '<div class="value">' + c.coverage_pct + '%</div><div class="pb" style="margin:8px 0"><div class="' + bar + '" style="width:' + c.coverage_pct + '%"></div></div>'
-      + '<div class="ai-muted">断点 ' + c.gap_count + ' 个，最长 ' + c.longest_gap_minutes + ' 分钟；最后数据：' + extFmt(c.last_data_at)
-      + (c.currently_stale ? ' <span class="tag tr">已停更</span>' : '') + '</div></div>';
-    html += '<div class="stat-card"><div class="label">实验室挂钩：化验样品在采样时刻 ±' + l.window_minutes + ' 分钟内的在线数据覆盖</div><div class="value">'
-      + (l.covered_pct != null ? l.covered_count + ' / ' + l.sample_count + '（' + l.covered_pct + '%）' : '暂无化验样品') + '</div>';
+      + '<div class="ai-muted">' + tf('extGapSummary', c.gap_count, c.longest_gap_minutes) + extFmt(c.last_data_at)
+      + (c.currently_stale ? ' <span class="tag tr">' + t('extStale') + '</span>' : '') + '</div></div>';
+    html += '<div class="stat-card"><div class="label">' + tf('extLabLinkLabel', l.window_minutes) + '</div><div class="value">'
+      + (l.covered_pct != null ? l.covered_count + ' / ' + l.sample_count + L(' (', '（') + l.covered_pct + L('%)', '%）') : L('No lab samples yet', '暂无化验样品')) + '</div>';
     var miss = l.items.filter(function(i) { return !i.covered; });
-    if (miss.length) html += '<div class="ai-muted" style="margin-top:6px">无在线数据的样品：' + miss.map(function(i) {
-      return escHtml(i.sample_no || ('#' + i.sample_id)) + '（' + extFmt(i.sampled_at) + (i.explained_by_gap_id ? '，断点 #' + i.explained_by_gap_id : '') + '）';
-    }).join('、') + '</div>';
+    if (miss.length) html += '<div class="ai-muted" style="margin-top:6px">' + L('Samples without online data: ', '无在线数据的样品：') + miss.map(function(i) {
+      return escHtml(i.sample_no || ('#' + i.sample_id)) + L(' (', '（') + extFmt(i.sampled_at) + (i.explained_by_gap_id ? L(', gap #', '，断点 #') + i.explained_by_gap_id : '') + L(')', '）');
+    }).join(L(', ', '、')) + '</div>';
     box.innerHTML = html + '</div>';
   }).catch(function(e) { box.innerHTML = '<span style="color:#f5222d">' + escHtml(e.message) + '</span>'; });
 }
@@ -4144,7 +4505,7 @@ function populateDaImportDeviceSelect() {
 function daImportExtraFields() {
   var sel = document.getElementById('daImportDevice');
   if (!sel || !sel.value) {
-    alert('请先选择一个设备 / Please select a device first');
+    alert(L('Please select a device first', '请先选择一个设备'));
     return false;
   }
   return { device_id: sel.value };
@@ -4607,7 +4968,7 @@ function tplLoadCategories() {
   aimsFetch('/templates/categories').then(function(d){
     tplState.categories = d.categories || [];
     var html = '<div style="border:1px solid #eee;border-radius:8px;overflow:hidden">';
-    html += '<div class="tpl-cat tpl-cat-active" data-cat="" onclick="tplPickCategory(\'\')">全部模板</div>';
+    html += '<div class="tpl-cat tpl-cat-active" data-cat="" onclick="tplPickCategory(\'\')">' + L('All Templates', '全部模板') + '</div>';
     tplState.categories.forEach(function(c){
       html += '<div class="tpl-cat" data-cat="' + c + '" onclick="tplPickCategory(\'' + c + '\')">' + c + '</div>';
     });
@@ -4615,7 +4976,7 @@ function tplLoadCategories() {
     if (box) box.innerHTML = html;
   }).catch(function(e){
     // 401 由 aimsFetch 统一弹重新登录提示；这里只渲染分类栏自身的错误
-    if (box && e.httpStatus !== 401) box.innerHTML = '<div style="color:#f5222d;font-size:12px">加载分类失败：' + tplEsc(e.message) + '</div>';
+    if (box && e.httpStatus !== 401) box.innerHTML = '<div style="color:#f5222d;font-size:12px">' + L('Failed to load categories: ', '加载分类失败：') + tplEsc(e.message) + '</div>';
   });
 }
 
@@ -4639,33 +5000,33 @@ function tplLoad() {
   aimsFetch(url).then(function(list){
     tplState.templates = list || [];
     if (!tplState.templates.length) {
-      box.innerHTML = '<div style="color:#999;padding:24px;text-align:center">该筛选条件下暂无模板。点「导入模板」或「新建模板」开始。</div>';
+      box.innerHTML = '<div style="color:#999;padding:24px;text-align:center">' + L('No templates match this filter. Click “Import Templates” or “New Template” to get started.', '该筛选条件下暂无模板。点「导入模板」或「新建模板」开始。') + '</div>';
       return;
     }
     box.innerHTML = tplState.templates.map(function(t){
-      var srcBadge = t.source === 'system' ? '<span style="background:#e6f7ff;color:#1890ff;border-radius:4px;padding:1px 6px;font-size:11px">系统</span>'
-        : t.source === 'imported' ? '<span style="background:#fff7e6;color:#fa8c16;border-radius:4px;padding:1px 6px;font-size:11px">导入</span>'
-        : '<span style="background:#f6ffed;color:#52c41a;border-radius:4px;padding:1px 6px;font-size:11px">我的</span>';
+      var srcBadge = t.source === 'system' ? '<span style="background:#e6f7ff;color:#1890ff;border-radius:4px;padding:1px 6px;font-size:11px">' + L('System', '系统') + '</span>'
+        : t.source === 'imported' ? '<span style="background:#fff7e6;color:#fa8c16;border-radius:4px;padding:1px 6px;font-size:11px">' + L('Imported', '导入') + '</span>'
+        : '<span style="background:#f6ffed;color:#52c41a;border-radius:4px;padding:1px 6px;font-size:11px">' + L('Mine', '我的') + '</span>';
       return '<div class="card" style="cursor:pointer" onclick="tplShowDetail(' + t.id + ')">' +
         '<div style="display:flex;justify-content:space-between;align-items:center">' +
         '<b style="font-size:14px">' + tplEsc(t.name) + '</b>' + srcBadge + '</div>' +
         '<div style="color:#888;font-size:12px;margin:6px 0">' + tplEsc(t.category) + ' · v' + t.current_version +
-        (t.is_default ? ' · <span style="color:#fa8c16">默认</span>' : '') +
+        (t.is_default ? ' · <span style="color:#fa8c16">' + L('Default', '默认') + '</span>' : '') +
         (t.is_favorite ? ' · <span style="color:#faad14">★</span>' : '') + '</div>' +
         '<div style="font-size:12px;color:#666;height:32px;overflow:hidden">' + tplEsc(t.description || '') + '</div>' +
-        '<div style="font-size:11px;color:#aaa;margin-top:6px">作者：' + tplEsc(t.author || '-') + '</div>' +
+        '<div style="font-size:11px;color:#aaa;margin-top:6px">' + L('Author: ', '作者：') + tplEsc(t.author || '-') + '</div>' +
         '</div>';
     }).join('');
   }).catch(function(e){
     if (e && e.httpStatus === 401) {
       // 登录失效/未登录：给出明确的重新认证入口，而不是一句英文报错
       box.innerHTML = '<div style="padding:16px;color:#a8071a;background:#fff2f0;border:1px solid #ffa39e;border-radius:8px">' +
-        '<b>登录已失效，无法加载模板。</b><br><span style="font-size:12px">请重新登录后重试（登录不会影响已保存的模板与数据）。</span><br>' +
-        '<button class="btn btn-primary" style="margin-top:8px" onclick="aimsGoToLogin()">去登录</button> ' +
-        '<button class="btn btn-gray" style="margin-top:8px" onclick="tplLoad()">重试</button></div>';
+        '<b>' + L('Your session has expired; templates cannot be loaded.', '登录已失效，无法加载模板。') + '</b><br><span style="font-size:12px">' + L('Please sign in again and retry (signing in does not affect saved templates or data).', '请重新登录后重试（登录不会影响已保存的模板与数据）。') + '</span><br>' +
+        '<button class="btn btn-primary" style="margin-top:8px" onclick="aimsGoToLogin()">' + L('Sign in', '去登录') + '</button> ' +
+        '<button class="btn btn-gray" style="margin-top:8px" onclick="tplLoad()">' + L('Retry', '重试') + '</button></div>';
       return;
     }
-    box.innerHTML = '<div style="color:#f5222d;padding:16px">加载失败：' + tplEsc(e && e.message) + '</div>';
+    box.innerHTML = '<div style="color:#f5222d;padding:16px">' + L('Load failed: ', '加载失败：') + tplEsc(e && e.message) + '</div>';
   });
 }
 
@@ -4681,75 +5042,75 @@ function tplShowDetail(id) {
       '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">' +
       '<b style="font-size:16px">' + tplEsc(t.name) + '</b>' +
       '<div>' +
-      '<button class="btn btn-primary" onclick="tplApply(' + t.id + ')">应用模板</button> ' +
-      '<button class="btn btn-success" onclick="tplEdit(' + t.id + ')">编辑</button> ' +
-      '<button class="btn btn-gray" onclick="tplDuplicate(' + t.id + ')">复制</button> ' +
-      '<button class="btn btn-gray" onclick="tplDownload(' + t.id + ')">导出 .aimstpl</button> ' +
-      '<button class="btn btn-warning" onclick="tplToggleFav(' + t.id + ')">收藏</button> ' +
-      '<button class="btn btn-danger" onclick="tplDelete(' + t.id + ')">删除</button>' +
+      '<button class="btn btn-primary" onclick="tplApply(' + t.id + ')">' + L('Apply Template', '应用模板') + '</button> ' +
+      '<button class="btn btn-success" onclick="tplEdit(' + t.id + ')">' + L('Edit', '编辑') + '</button> ' +
+      '<button class="btn btn-gray" onclick="tplDuplicate(' + t.id + ')">' + L('Duplicate', '复制') + '</button> ' +
+      '<button class="btn btn-gray" onclick="tplDownload(' + t.id + ')">' + L('Export .aimstpl', '导出 .aimstpl') + '</button> ' +
+      '<button class="btn btn-warning" onclick="tplToggleFav(' + t.id + ')">' + L('Favorite', '收藏') + '</button> ' +
+      '<button class="btn btn-danger" onclick="tplDelete(' + t.id + ')">' + L('Delete', '删除') + '</button>' +
       '</div></div>' +
-      '<div style="font-size:12px;color:#666;margin-bottom:8px">分类：' + tplEsc(t.category) + ' · 版本：v' + t.current_version +
-      ' · 来源：' + t.source + ' · 作者：' + tplEsc(t.author || '-') + ' · UID：<code>' + tplEsc(t.template_uid) + '</code></div>' +
-      '<div style="font-size:13px;margin-bottom:8px">' + tplEsc(t.description || '（无描述）') + '</div>' +
-      '<details style="margin:10px 0"><summary style="cursor:pointer;font-weight:bold">版本历史（点击展开/回退）</summary><div id="tplVersions" style="margin-top:8px">加载中…</div></details>' +
-      '<details open><summary style="cursor:pointer;font-weight:bold">模板正文（template.json，当前版本）</summary>' +
+      '<div style="font-size:12px;color:#666;margin-bottom:8px">' + L('Category: ', '分类：') + tplEsc(t.category) + L(' · Version: v', ' · 版本：v') + t.current_version +
+      L(' · Source: ', ' · 来源：') + t.source + L(' · Author: ', ' · 作者：') + tplEsc(t.author || '-') + ' · UID: <code>' + tplEsc(t.template_uid) + '</code></div>' +
+      '<div style="font-size:13px;margin-bottom:8px">' + tplEsc(t.description || L('(no description)', '（无描述）')) + '</div>' +
+      '<details style="margin:10px 0"><summary style="cursor:pointer;font-weight:bold">' + L('Version history (click to expand / roll back)', '版本历史（点击展开/回退）') + '</summary><div id="tplVersions" style="margin-top:8px">' + L('Loading…', '加载中…') + '</div></details>' +
+      '<details open><summary style="cursor:pointer;font-weight:bold">' + L('Template body (template.json, current version)', '模板正文（template.json，当前版本）') + '</summary>' +
       '<pre style="background:#fff;border:1px solid #eee;border-radius:6px;padding:12px;font-size:11px;overflow:auto;max-height:300px">' + tplEsc(JSON.stringify(t.content, null, 2)) + '</pre></details>';
     tplLoadVersions(id);
-  }).catch(function(e){ alert('加载模板详情失败：' + e.message); });
+  }).catch(function(e){ alert(L('Failed to load template details: ', '加载模板详情失败：') + e.message); });
 }
 
 function tplLoadVersions(id) {
   aimsFetch('/templates/' + id + '/versions').then(function(vs){
     var box = document.getElementById('tplVersions');
     if (!box) return;
-    if (!vs.length) { box.innerHTML = '<div style="color:#999;font-size:12px">无版本记录</div>'; return; }
+    if (!vs.length) { box.innerHTML = '<div style="color:#999;font-size:12px">' + L('No version history', '无版本记录') + '</div>'; return; }
     box.innerHTML = '<table style="width:100%;font-size:12px;border-collapse:collapse">' +
-      '<tr style="color:#999"><th style="text-align:left;padding:4px">版本</th><th style="text-align:left">说明</th><th style="text-align:left">时间</th><th></th></tr>' +
+      '<tr style="color:#999"><th style="text-align:left;padding:4px">' + L('Version', '版本') + '</th><th style="text-align:left">' + L('Notes', '说明') + '</th><th style="text-align:left">' + L('Time', '时间') + '</th><th></th></tr>' +
       vs.map(function(v){
         return '<tr><td style="padding:4px">v' + v.version + '</td><td>' + tplEsc(v.changelog || '—') + '</td>' +
         '<td>' + (v.created_at ? new Date(v.created_at).toLocaleString() : '-') + '</td>' +
-        '<td><button class="btn btn-link" style="padding:2px 6px" onclick="tplRestore(' + id + ',' + v.version + ')">回退到此版</button></td></tr>';
+        '<td><button class="btn btn-link" style="padding:2px 6px" onclick="tplRestore(' + id + ',' + v.version + ')">' + L('Roll back to this version', '回退到此版') + '</button></td></tr>';
       }).join('') + '</table>';
-  }).catch(function(e){ if (document.getElementById('tplVersions')) document.getElementById('tplVersions').textContent = '加载失败：' + e.message; });
+  }).catch(function(e){ if (document.getElementById('tplVersions')) document.getElementById('tplVersions').textContent = L('Load failed: ', '加载失败：') + e.message; });
 }
 
 function tplRestore(id, version) {
-  if (!confirm('回退到 v' + version + '？将生成一个新版本（历史保留，可再次回退）。')) return;
+  if (!confirm(L('Roll back to v', '回退到 v') + version + L('? A new version will be created (history is kept; you can roll back again).', '？将生成一个新版本（历史保留，可再次回退）。'))) return;
   aimsFetch('/templates/' + id + '/versions/' + version + '/restore', {method:'POST'})
-    .then(function(){ tplShowDetail(id); tplLoad(); }).catch(function(e){ alert('回退失败：' + e.message); });
+    .then(function(){ tplShowDetail(id); tplLoad(); }).catch(function(e){ alert(L('Roll back failed: ', '回退失败：') + e.message); });
 }
 
 function tplApply(id) {
   var t = tplState.templates.filter(function(x){ return x.id === id; })[0] || {};
   var deviceHint = '';
   if ((t.category || '').indexOf('报警') === 0 || t.category === 'TAG 点位') {
-    deviceHint = '\n（该模板将应用到目标设备；留空则使用系统中第一台设备）';
+    deviceHint = L('\n(This template is applied to the target device; leave blank to use the first device in the system.)', '\n（该模板将应用到目标设备；留空则使用系统中第一台设备）');
   }
-  if (!confirm('应用模板「' + (t.name || id) + '」？\n将在业务数据中创建对应记录（幂等：已存在的编码会跳过，不会覆盖现有数据）。' + deviceHint)) return;
+  if (!confirm(L('Apply template “', '应用模板「') + (t.name || id) + L('”?\nThis creates the corresponding records in your business data (idempotent: existing codes are skipped and nothing is overwritten).', '」？\n将在业务数据中创建对应记录（幂等：已存在的编码会跳过，不会覆盖现有数据）。') + deviceHint)) return;
   aimsFetch('/templates/' + id + '/apply', {method:'POST', body: JSON.stringify({})})
     .then(function(res){
       var created = (res.result || {}).created || {};
-      var lines = Object.keys(created).map(function(k){ return k + ': ' + (Array.isArray(created[k]) ? created[k].join(', ') || '（无新增，均已存在）' : created[k]); });
-      alert('应用成功：\n' + (lines.join('\n') || '（无新增数据）'));
+      var lines = Object.keys(created).map(function(k){ return k + ': ' + (Array.isArray(created[k]) ? created[k].join(', ') || L('(nothing new, all already exist)', '（无新增，均已存在）') : created[k]); });
+      alert(L('Applied successfully:\n', '应用成功：\n') + (lines.join('\n') || L('(no new data)', '（无新增数据）')));
       tplShowDetail(id);
     })
-    .catch(function(e){ alert('应用失败：' + e.message); });
+    .catch(function(e){ alert(L('Apply failed: ', '应用失败：') + e.message); });
 }
 
 function tplDuplicate(id) {
-  aimsFetch('/templates/' + id + '/duplicate', {method:'POST'}).then(function(){ tplLoad(); alert('已复制为「我的模板」。'); })
-    .catch(function(e){ alert('复制失败：' + e.message); });
+  aimsFetch('/templates/' + id + '/duplicate', {method:'POST'}).then(function(){ tplLoad(); alert(L('Duplicated into “My Templates”.', '已复制为「我的模板」。')); })
+    .catch(function(e){ alert(L('Duplicate failed: ', '复制失败：') + e.message); });
 }
 
 function tplToggleFav(id) {
   aimsFetch('/templates/' + id + '/favorite', {method:'POST'}).then(function(){ tplShowDetail(id); tplLoad(); })
-    .catch(function(e){ alert('操作失败：' + e.message); });
+    .catch(function(e){ alert(L('Operation failed: ', '操作失败：') + e.message); });
 }
 
 function tplDelete(id) {
-  if (!confirm('删除该模板？\n只删除模板与其版本历史；已应用生成的设备/报警等业务数据不受影响。')) return;
+  if (!confirm(L('Delete this template?\nOnly the template and its version history are deleted; devices / alarms etc. already created from it are not affected.', '删除该模板？\n只删除模板与其版本历史；已应用生成的设备/报警等业务数据不受影响。'))) return;
   aimsFetch('/templates/' + id, {method:'DELETE'}).then(function(){ tplState.currentId = null; document.getElementById('tplDetail').style.display='none'; tplLoad(); })
-    .catch(function(e){ alert('删除失败：' + e.message); });
+    .catch(function(e){ alert(L('Delete failed: ', '删除失败：') + e.message); });
 }
 
 // 模板导出是二进制（.aimstpl / zip）且需要 Bearer 认证，用 fetch+blob 触发下载
@@ -4760,7 +5121,7 @@ function tplBlobDownload(method, path, body, fallbackName) {
   if (token) opts.headers = Object.assign(opts.headers || {}, { 'Authorization': 'Bearer ' + token });
   fetch(apiBase() + path, opts).then(function(r){
     if (!r.ok) {
-      if (r.status === 401) { aimsSessionExpired(AIMS_SESSION_EXPIRED_MSG); throw new Error(AIMS_SESSION_EXPIRED_MSG); }
+      if (r.status === 401) { aimsSessionExpired(aimsExpiredMsg()); throw new Error(aimsExpiredMsg()); }
       throw new Error('HTTP ' + r.status);
     }
     var cd = r.headers.get('Content-Disposition') || '';
@@ -4773,20 +5134,20 @@ function tplBlobDownload(method, path, body, fallbackName) {
       document.body.appendChild(a); a.click(); a.remove();
       URL.revokeObjectURL(url);
     });
-  }).catch(function(e){ alert('导出失败（请先登录）：' + e.message); });
+  }).catch(function(e){ alert(L('Export failed (please sign in first): ', '导出失败（请先登录）：') + e.message); });
 }
 
 function tplDownload(id) { tplBlobDownload('GET', '/templates/' + id + '/export', null, 'template.aimstpl'); }
 
 function tplExportAllCustom() {
-  if (!confirm('导出全部「我的模板 + 已导入模板」为一个 ZIP？')) return;
+  if (!confirm(L('Export all “My Templates + Imported Templates” as one ZIP?', '导出全部「我的模板 + 已导入模板」为一个 ZIP？'))) return;
   tplBlobDownload('POST', '/templates/export/batch', {all_custom: true}, 'aims-templates.zip');
 }
 
 // ---------- 新建/编辑 ----------
 function tplShowCreate() {
   tplState.editingId = null;
-  document.getElementById('tplEditorTitle').textContent = '新建模板';
+  document.getElementById('tplEditorTitle').textContent = L('New Template', '新建模板');
   document.getElementById('tplName').value = '';
   document.getElementById('tplAuthor').value = '';
   document.getElementById('tplTags').value = '';
@@ -4800,9 +5161,9 @@ function tplShowCreate() {
 
 function tplEdit(id) {
   aimsFetch('/templates/' + id).then(function(t){
-    if (t.source === 'system' && !confirm('这是系统内置模板：不允许改名/改分类，但可以基于它保存新版本。继续？')) return;
+    if (t.source === 'system' && !confirm(L('This is a built-in system template: renaming / re-categorising is not allowed, but you can save a new version based on it. Continue?', '这是系统内置模板：不允许改名/改分类，但可以基于它保存新版本。继续？'))) return;
     tplState.editingId = id;
-    document.getElementById('tplEditorTitle').textContent = '编辑模板 #' + id + '（保存将生成 v' + (t.current_version + 1) + '）';
+    document.getElementById('tplEditorTitle').textContent = L('Edit template #', '编辑模板 #') + id + L(' (saving creates v', '（保存将生成 v') + (t.current_version + 1) + L(')', '）');
     document.getElementById('tplName').value = t.name;
     var sel = document.getElementById('tplCategory');
     sel.innerHTML = tplState.categories.map(function(c){ return '<option' + (c === t.category ? ' selected' : '') + '>' + c + '</option>'; }).join('');
@@ -4813,7 +5174,7 @@ function tplEdit(id) {
     document.getElementById('tplContent').value = JSON.stringify(t.content, null, 2);
     document.getElementById('tplChangelog').value = '';
     document.getElementById('tplEditor').style.display = 'block';
-  }).catch(function(e){ alert('加载失败：' + e.message); });
+  }).catch(function(e){ alert(L('Load failed: ', '加载失败：') + e.message); });
 }
 
 function tplHideEditor() { document.getElementById('tplEditor').style.display = 'none'; }
@@ -4824,8 +5185,8 @@ function tplSave() {
   var contentRaw = document.getElementById('tplContent').value;
   var content;
   try { content = JSON.parse(contentRaw); }
-  catch (e) { alert('模板正文不是合法 JSON：' + e.message); return; }
-  if (!name) { alert('请填写模板名称。'); return; }
+  catch (e) { alert(L('Template body is not valid JSON: ', '模板正文不是合法 JSON：') + e.message); return; }
+  if (!name) { alert(L('Please enter a template name.', '请填写模板名称。')); return; }
   var payload = {
     name: name, category: category,
     description: document.getElementById('tplDesc').value.trim() || null,
@@ -4838,7 +5199,7 @@ function tplSave() {
     ? aimsFetch('/templates/' + tplState.editingId, {method:'PUT', body: JSON.stringify(payload)})
     : aimsFetch('/templates', {method:'POST', body: JSON.stringify(payload)});
   call.then(function(){ tplHideEditor(); tplLoad(); if (tplState.editingId) tplShowDetail(tplState.editingId); else tplShowCreateDone(); })
-    .catch(function(e){ alert('保存失败：' + e.message); });
+    .catch(function(e){ alert(L('Save failed: ', '保存失败：') + e.message); });
 }
 function tplShowCreateDone(){ /* 新建后列表自动刷新即可 */ }
 
@@ -4847,7 +5208,7 @@ function tplImportPreview(input) {
   var files = Array.prototype.slice.call(input.files || []);
   if (!files.length) return;
   var box = document.getElementById('tplPreview');
-  box.innerHTML = '<div style="color:#1890ff">解析中（共 ' + files.length + ' 个文件，自动安全检查：ZIP 路径穿越 / 体积 / JSON 结构 / 版本兼容）…</div>';
+  box.innerHTML = '<div style="color:#1890ff">' + L('Parsing (', '解析中（共 ') + files.length + L(' files; automatic security checks: ZIP path traversal / size / JSON structure / version compatibility)…', ' 个文件，自动安全检查：ZIP 路径穿越 / 体积 / JSON 结构 / 版本兼容）…') + '</div>';
   var fd = new FormData();
   files.forEach(function(f){ fd.append('files', f); });
   var token = aimsTokens().access;
@@ -4856,10 +5217,10 @@ function tplImportPreview(input) {
   fetch(apiBase() + '/templates/import?confirm=false', opts)
     .then(function(r){ return r.json().catch(function(){return {};}); })
     .then(function(data){
-      if (!data.results) { box.innerHTML = '<div style="color:#f5222d">预览失败（HTTP ' + r.status + '）：请先登录。</div>'; return; }
+      if (!data.results) { box.innerHTML = '<div style="color:#f5222d">' + L('Preview failed (HTTP ', '预览失败（HTTP ') + r.status + L('): please sign in first.', '）：请先登录。') + '</div>'; return; }
       tplRenderPreview(data, files);
     })
-    .catch(function(e){ box.innerHTML = '<div style="color:#f5222d">预览失败：' + e.message + '</div>'; });
+    .catch(function(e){ box.innerHTML = '<div style="color:#f5222d">' + L('Preview failed: ', '预览失败：') + e.message + '</div>'; });
   input.value = '';
 }
 
@@ -4867,30 +5228,30 @@ function tplRenderPreview(data, files) {
   var box = document.getElementById('tplPreview');
   var anyFail = data.results.some(function(r){ return !r.ok; });
   var html = '<div style="padding:12px;background:' + (anyFail ? '#fff2f0' : '#f6ffed') + ';border-radius:8px;margin-bottom:12px">' +
-    '解析完成：' + data.ok_count + ' / ' + data.total + ' 个模板可导入。' +
-    (data.ok_count && !anyFail ? ' 确认无误后点击下方按钮正式导入。' : '') + '</div>';
+    L('Parsed: ', '解析完成：') + data.ok_count + ' / ' + data.total + L(' templates can be imported.', ' 个模板可导入。') +
+    (data.ok_count && !anyFail ? L(' Click the button below to import once everything looks right.', ' 确认无误后点击下方按钮正式导入。') : '') + '</div>';
   data.results.forEach(function(r){
     if (!r.ok) {
       html += '<div style="padding:10px;border:1px solid #ffa39e;background:#fff;border-radius:6px;margin-bottom:8px">' +
-        '<b>' + tplEsc(r.filename) + '</b> <span style="color:#f5222d">✘ 导入失败</span>' +
-        '<div style="font-size:12px;color:#cf1322;margin-top:4px">原因：' + tplEsc(r.error || '未知') + '</div></div>';
+        '<b>' + tplEsc(r.filename) + '</b> <span style="color:#f5222d">✘ ' + L('Import failed', '导入失败') + '</span>' +
+        '<div style="font-size:12px;color:#cf1322;margin-top:4px">' + L('Reason: ', '原因：') + tplEsc(r.error || L('unknown', '未知')) + '</div></div>';
       return;
     }
     var m = r.manifest || {};
     var conflicts = (r.conflicts || []).map(function(c){ return '<li>' + tplEsc(c.detail) + '</li>'; }).join('');
     var missing = (r.missing_dependencies || []).join(', ');
     html += '<div style="padding:10px;border:1px solid #d9d9d9;background:#fff;border-radius:6px;margin-bottom:8px">' +
-      '<b>' + tplEsc(r.filename) + '</b> ✔ 结构检查通过' +
-      '<div style="font-size:12px;color:#555;margin:6px 0">名称：' + tplEsc(m.name) + ' · 分类：' + tplEsc(m.category) +
-      ' · 包版本：' + tplEsc(m.version) + ' · 最低兼容：' + tplEsc(m.min_aims_version) + ' · 作者：' + tplEsc(m.author || '-') + '</div>' +
-      '<div style="font-size:12px;color:#555">内容：' + JSON.stringify(r.summary || {}) + '</div>' +
-      (conflicts ? '<div style="font-size:12px;color:#fa8c16;margin-top:4px">版本冲突：<ul style="margin:4px 0">' + conflicts + '</ul></div>' : '') +
-      (missing ? '<div style="font-size:12px;color:#fa8c16">缺失依赖：' + tplEsc(missing) + '</div>' : '') +
-      (r.scripts && r.scripts.count ? '<div style="font-size:12px;color:#999">脚本文件 ' + r.scripts.count + ' 个：默认禁用，系统内无执行入口。</div>' : '') +
+      '<b>' + tplEsc(r.filename) + '</b> ✔ ' + L('Structure check passed', '结构检查通过') +
+      '<div style="font-size:12px;color:#555;margin:6px 0">' + L('Name: ', '名称：') + tplEsc(m.name) + L(' · Category: ', ' · 分类：') + tplEsc(m.category) +
+      L(' · Package version: ', ' · 包版本：') + tplEsc(m.version) + L(' · Min compatible: ', ' · 最低兼容：') + tplEsc(m.min_aims_version) + L(' · Author: ', ' · 作者：') + tplEsc(m.author || '-') + '</div>' +
+      '<div style="font-size:12px;color:#555">' + L('Contents: ', '内容：') + JSON.stringify(r.summary || {}) + '</div>' +
+      (conflicts ? '<div style="font-size:12px;color:#fa8c16;margin-top:4px">' + L('Version conflicts:', '版本冲突：') + '<ul style="margin:4px 0">' + conflicts + '</ul></div>' : '') +
+      (missing ? '<div style="font-size:12px;color:#fa8c16">' + L('Missing dependencies: ', '缺失依赖：') + tplEsc(missing) + '</div>' : '') +
+      (r.scripts && r.scripts.count ? '<div style="font-size:12px;color:#999">' + L('Script files: ', '脚本文件 ') + r.scripts.count + L(' (disabled by default; there is no way to execute them in the system).', ' 个：默认禁用，系统内无执行入口。') + '</div>' : '') +
       '<div style="font-size:11px;color:#aaa">SHA-256：' + tplEsc(r.sha256 || '') + '</div></div>';
   });
   if (data.ok_count > 0) {
-    html += '<button class="btn btn-primary" id="tplConfirmBtn" onclick="tplImportConfirm()">确认导入（' + data.ok_count + ' 个）</button>';
+    html += '<button class="btn btn-primary" id="tplConfirmBtn" onclick="tplImportConfirm()">' + L('Confirm Import (', '确认导入（') + data.ok_count + L(')', ' 个）') + '</button>';
     tplState.lastPreview = files;
   }
   box.innerHTML = html;
@@ -4911,26 +5272,26 @@ function tplImportConfirm() {
       var ok = (data.results || []).filter(function(r){ return r.ok; }).length;
       var fail = (data.results || []).length - ok;
       document.getElementById('tplPreview').innerHTML =
-        '<div style="padding:12px;background:' + (fail ? '#fff7e6' : '#f6ffed') + ';border-radius:8px">导入完成：成功 ' + ok + ' 个' +
-        (fail ? '，失败 ' + fail + ' 个（失败原因见下方导入记录）' : '') + '。模板已进入「已导入模板」分类，可立即使用。</div>';
+        '<div style="padding:12px;background:' + (fail ? '#fff7e6' : '#f6ffed') + ';border-radius:8px">' + L('Import finished: ', '导入完成：成功 ') + ok + L(' succeeded', ' 个') +
+        (fail ? L(', ', '，失败 ') + fail + L(' failed (see the import log below for reasons)', ' 个（失败原因见下方导入记录）') : '') + L('. Templates are now under “Imported Templates” and ready to use.', '。模板已进入「已导入模板」分类，可立即使用。') + '</div>';
       tplLoad();
     })
-    .catch(function(e){ alert('导入失败：' + e.message); document.getElementById('tplConfirmBtn').disabled = false; });
+    .catch(function(e){ alert(L('Import failed: ', '导入失败：') + e.message); document.getElementById('tplConfirmBtn').disabled = false; });
 }
 
 function tplLoadLogs() {
   aimsFetch('/templates/import/logs').then(function(rows){
     var box = document.getElementById('tplLogList');
-    if (!rows.length) { box.innerHTML = '<div style="color:#999">还没有导入记录。</div>'; return; }
+    if (!rows.length) { box.innerHTML = '<div style="color:#999">' + L('No import records yet.', '还没有导入记录。') + '</div>'; return; }
     box.innerHTML = '<table style="width:100%;font-size:12px;border-collapse:collapse">' +
-      '<tr style="color:#999"><th style="text-align:left;padding:4px">时间</th><th style="text-align:left">文件</th><th style="text-align:left">模板</th><th style="text-align:left">状态</th><th style="text-align:left">原因</th></tr>' +
+      '<tr style="color:#999"><th style="text-align:left;padding:4px">' + L('Time', '时间') + '</th><th style="text-align:left">' + L('File', '文件') + '</th><th style="text-align:left">' + L('Template', '模板') + '</th><th style="text-align:left">' + L('Status', '状态') + '</th><th style="text-align:left">' + L('Reason', '原因') + '</th></tr>' +
       rows.map(function(r){
         return '<tr><td style="padding:4px">' + (r.created_at ? new Date(r.created_at).toLocaleString() : '-') + '</td>' +
         '<td>' + tplEsc(r.filename) + '</td><td>' + tplEsc(r.template_name || '-') + '</td>' +
-        '<td>' + (r.status === 'success' ? '<span style="color:#52c41a">成功</span>' : '<span style="color:#f5222d">失败</span>') + '</td>' +
+        '<td>' + (r.status === 'success' ? '<span style="color:#52c41a">' + L('Success', '成功') + '</span>' : '<span style="color:#f5222d">' + L('Failed', '失败') + '</span>') + '</td>' +
         '<td style="color:#999;max-width:320px;word-break:break-all">' + tplEsc(r.reason || '') + '</td></tr>';
       }).join('') + '</table>';
-  }).catch(function(e){ document.getElementById('tplLogList').innerHTML = '<div style="color:#f5222d">加载失败：' + e.message + '</div>'; });
+  }).catch(function(e){ document.getElementById('tplLogList').innerHTML = '<div style="color:#f5222d">' + L('Load failed: ', '加载失败：') + e.message + '</div>'; });
 }
 
 // ===== Alarms (报警中心, 阶段 7) =====
@@ -4956,7 +5317,7 @@ function loadAlarms() {
   aimsFetch('/alarms' + qs).then(function(rows) {
     ALARM_CACHE = Array.isArray(rows) ? rows : [];
     if (!ALARM_CACHE.length) {
-      tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;color:#999">暂无报警（阈值内运行正常）</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;color:#999">' + L('No alarms (running within thresholds)', '暂无报警（阈值内运行正常）') + '</td></tr>';
     } else {
       tbody.innerHTML = ALARM_CACHE.map(function(a) {
         var canAck = a.status === 'active';
@@ -4970,8 +5331,8 @@ function loadAlarms() {
           + '<td><span class="tag ' + alarmSevClass(a.severity) + '">' + escHtml(a.severity) + '</span></td>'
           + '<td>' + escHtml(a.status) + '</td>'
           + '<td style="max-width:320px;word-break:break-all">' + escHtml(a.message || '') + '</td>'
-          + '<td>' + (canAck ? '<button class="btn btn-gray" style="padding:2px 8px" onclick="alarmAck(' + a.id + ')">确认</button> ' : '')
-          + (canResolve ? '<button class="btn btn-success" style="padding:2px 8px" onclick="alarmResolve(' + a.id + ')">解决</button>' : '-')
+          + '<td>' + (canAck ? '<button class="btn btn-gray" style="padding:2px 8px" onclick="alarmAck(' + a.id + ')">' + L('Acknowledge', '确认') + '</button> ' : '')
+          + (canResolve ? '<button class="btn btn-success" style="padding:2px 8px" onclick="alarmResolve(' + a.id + ')">' + L('Resolve', '解决') + '</button>' : '-')
           + '</td></tr>';
       }).join('');
     }
@@ -4979,38 +5340,38 @@ function loadAlarms() {
     if (sum) {
       var act = ALARM_CACHE.filter(function(a){return a.status === 'active'}).length;
       var crit = ALARM_CACHE.filter(function(a){return a.severity === 'critical' && a.status !== 'resolved'}).length;
-      sum.textContent = '共 ' + ALARM_CACHE.length + ' 条 · 未确认 ' + act + ' · 严重未解决 ' + crit;
+      sum.textContent = L('Total ', '共 ') + ALARM_CACHE.length + L(' · Unacknowledged ', ' 条 · 未确认 ') + act + L(' · Critical unresolved ', ' · 严重未解决 ') + crit;
     }
   }).catch(function(e) {
-    tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;color:#f5222d">加载失败：' + escHtml(e.message || e) + '</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;color:#f5222d">' + L('Load failed: ', '加载失败：') + escHtml(e.message || e) + '</td></tr>';
   });
 }
 function alarmAck(id) {
-  aimsFetch('/alarms/' + id + '/acknowledge', {method: 'POST'}).then(loadAlarms).catch(function(e){ alert('确认失败：' + (e.message || e)); });
+  aimsFetch('/alarms/' + id + '/acknowledge', {method: 'POST'}).then(loadAlarms).catch(function(e){ alert(L('Acknowledge failed: ', '确认失败：') + (e.message || e)); });
 }
 function alarmResolve(id) {
-  if (!confirm('确认该报警已解决？')) return;
-  aimsFetch('/alarms/' + id + '/resolve', {method: 'POST'}).then(loadAlarms).catch(function(e){ alert('操作失败：' + (e.message || e)); });
+  if (!confirm(L('Mark this alarm as resolved?', '确认该报警已解决？'))) return;
+  aimsFetch('/alarms/' + id + '/resolve', {method: 'POST'}).then(loadAlarms).catch(function(e){ alert(L('Operation failed: ', '操作失败：') + (e.message || e)); });
 }
 function loadAlarmRules() {
   var tbody = document.getElementById('alarmRuleBody');
   if (!tbody) return;
   aimsFetch('/alarms/rules').then(function(rows) {
     if (!Array.isArray(rows) || !rows.length) {
-      tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:#999">暂无规则</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:#999">' + L('No rules', '暂无规则') + '</td></tr>';
       return;
     }
     tbody.innerHTML = rows.map(function(r) {
-      var lowHigh = (r.low_limit != null ? '低 ' + r.low_limit : '') + (r.high_limit != null ? ' 高 ' + r.high_limit : '');
+      var lowHigh = (r.low_limit != null ? L('Low ', '低 ') + r.low_limit : '') + (r.high_limit != null ? L(' High ', ' 高 ') + r.high_limit : '');
       return '<tr><td>' + r.id + '</td><td>' + escHtml(r.rule_type || '-')
         + (r.component_name ? ' · ' + escHtml(r.component_name) : '') + '</td>'
         + '<td>' + escHtml(r.rule_type || '-') + '</td>'
         + '<td>' + escHtml(lowHigh.trim() || '-') + '</td>'
         + '<td><span class="tag ' + alarmSevClass(r.severity) + '">' + escHtml(r.severity || '-') + '</span></td>'
-        + '<td>' + (r.is_enabled === false ? '否' : '是') + '</td></tr>';
+        + '<td>' + (r.is_enabled === false ? L('No', '否') : L('Yes', '是')) + '</td></tr>';
     }).join('');
   }).catch(function(e) {
-    tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:#f5222d">加载失败：' + escHtml(e.message || e) + '</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:#f5222d">' + L('Load failed: ', '加载失败：') + escHtml(e.message || e) + '</td></tr>';
   });
 }
 
@@ -5019,39 +5380,39 @@ function loadSysUsers() {
   var tbody = document.getElementById('sysUserBody');
   if (!tbody) return;
   aimsFetch('/system/users?limit=200').then(function(rows) {
-    if (!Array.isArray(rows) || !rows.length) { tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:#999">无用户</td></tr>'; return; }
+    if (!Array.isArray(rows) || !rows.length) { tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:#999">' + L('No users', '无用户') + '</td></tr>'; return; }
     tbody.innerHTML = rows.map(function(u) {
       return '<tr><td>' + u.id + '</td><td>' + escHtml(u.username) + '</td><td>' + escHtml(u.email || '-') + '</td>'
-        + '<td>' + (u.is_active ? '<span class="tag tg">启用</span>' : '<span class="tag to">停用</span>') + '</td>'
-        + '<td>' + (u.is_superuser ? '是' : '否') + '</td>'
-        + '<td>' + (u.is_active ? '<button class="btn btn-gray" style="padding:2px 8px" onclick="sysToggleUser(' + u.id + ',false)">停用</button>' : '<button class="btn btn-gray" style="padding:2px 8px" onclick="sysToggleUser(' + u.id + ',true)">启用</button>') + '</td></tr>';
+        + '<td>' + (u.is_active ? '<span class="tag tg">' + L('Enabled', '启用') + '</span>' : '<span class="tag to">' + L('Disabled', '停用') + '</span>') + '</td>'
+        + '<td>' + (u.is_superuser ? L('Yes', '是') : L('No', '否')) + '</td>'
+        + '<td>' + (u.is_active ? '<button class="btn btn-gray" style="padding:2px 8px" onclick="sysToggleUser(' + u.id + ',false)">' + L('Disable', '停用') + '</button>' : '<button class="btn btn-gray" style="padding:2px 8px" onclick="sysToggleUser(' + u.id + ',true)">' + L('Enable', '启用') + '</button>') + '</td></tr>';
     }).join('');
-  }).catch(function(e) { tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:#f5222d">加载失败：' + escHtml(e.message || e) + '</td></tr>'; });
+  }).catch(function(e) { tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:#f5222d">' + L('Load failed: ', '加载失败：') + escHtml(e.message || e) + '</td></tr>'; });
 }
 function sysToggleUser(id, active) {
-  if (!confirm(active ? '启用该用户？' : '停用该用户？停用后无法登录。')) return;
+  if (!confirm(active ? L('Enable this user?', '启用该用户？') : L('Disable this user? They will not be able to sign in.', '停用该用户？停用后无法登录。'))) return;
   aimsFetch('/system/users/' + id, {method: 'PATCH', body: JSON.stringify({is_active: active})})
-    .then(loadSysUsers).catch(function(e){ alert('操作失败：' + (e.message || e)); });
+    .then(loadSysUsers).catch(function(e){ alert(L('Operation failed: ', '操作失败：') + (e.message || e)); });
 }
 function loadSysAudit() {
   var tbody = document.getElementById('sysAuditBody');
   if (!tbody) return;
   aimsFetch('/system/audit-logs?limit=100').then(function(r) {
     var rows = Array.isArray(r) ? r : (r.items || []);
-    if (!rows.length) { tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;color:#999">暂无审计记录</td></tr>'; return; }
+    if (!rows.length) { tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;color:#999">' + L('No audit records', '暂无审计记录') + '</td></tr>'; return; }
     tbody.innerHTML = rows.map(function(a) {
       return '<tr><td>' + escHtml((a.created_at || '').replace('T', ' ').slice(0, 19)) + '</td><td>' + escHtml(a.username || a.user_id || '-')
         + '</td><td>' + escHtml(a.action || '-') + '</td><td>' + escHtml(a.entity || '-') + '</td>'
         + '<td style="max-width:360px;word-break:break-all">' + escHtml(a.detail ? JSON.stringify(a.detail) : '-') + '</td></tr>';
     }).join('');
-  }).catch(function(e) { tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;color:#f5222d">加载失败：' + escHtml(e.message || e) + '</td></tr>'; });
+  }).catch(function(e) { tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;color:#f5222d">' + L('Load failed: ', '加载失败：') + escHtml(e.message || e) + '</td></tr>'; });
 }
 function loadSysComponents() {
   var box = document.getElementById('sysCompBox');
   if (!box) return;
   // 首次采集要递归统计 Models/Backup/Database 的目录占用，大目录可能要几秒；
   // 默认 4 秒超时会把它掐断，这里单独放宽到 20 秒并如实告知。
-  box.innerHTML = '<div class="ai-muted">加载中…（首次统计目录占用可能需要数秒）</div>';
+  box.innerHTML = '<div class="ai-muted">' + L('Loading… (the first directory-usage scan can take a few seconds)', '加载中…（首次统计目录占用可能需要数秒）') + '</div>';
   aimsFetch('/system/components', { timeout: 20000 }).then(function(d) {
     var rows = (d.components || []).map(function(c) {
       var st = c.status === 'running' || c.status === 'enabled' || c.status === 'installed';
@@ -5060,18 +5421,18 @@ function loadSysComponents() {
         + '<td>' + escHtml(c.license || '-') + '</td><td style="max-width:280px;word-break:break-all;font-size:12px;color:#888">' + escHtml(c.path || '-') + '</td></tr>';
     }).join('');
     var usage = d.disk_usage || {};
-    var usageTxt = Object.keys(usage).map(function(k){ return k + ': ' + (usage[k] == null ? '不可用' : usage[k] + ' MB'); }).join(' · ');
-    box.innerHTML = '<div style="font-size:12px;color:#666;margin-bottom:8px">应用 ' + escHtml(d.app_version) + ' · Python ' + escHtml(d.python_version) + ' · ' + escHtml(d.platform) + '</div>'
-      + '<div class="table-wrap"><table><thead><tr><th>组件</th><th>版本</th><th>类别</th><th>状态</th><th>许可证</th><th>路径</th></tr></thead><tbody>' + rows + '</tbody></table></div>'
-      + (usageTxt ? '<div style="font-size:12px;color:#666;margin-top:8px">目录占用 — ' + escHtml(usageTxt) + '</div>' : '');
+    var usageTxt = Object.keys(usage).map(function(k){ return k + ': ' + (usage[k] == null ? L('n/a', '不可用') : usage[k] + ' MB'); }).join(' · ');
+    box.innerHTML = '<div style="font-size:12px;color:#666;margin-bottom:8px">' + L('App ', '应用 ') + escHtml(d.app_version) + ' · Python ' + escHtml(d.python_version) + ' · ' + escHtml(d.platform) + '</div>'
+      + '<div class="table-wrap"><table><thead><tr><th>' + L('Component', '组件') + '</th><th>' + L('Version', '版本') + '</th><th>' + L('Category', '类别') + '</th><th>' + L('Status', '状态') + '</th><th>' + L('License', '许可证') + '</th><th>' + L('Path', '路径') + '</th></tr></thead><tbody>' + rows + '</tbody></table></div>'
+      + (usageTxt ? '<div style="font-size:12px;color:#666;margin-top:8px">' + L('Directory usage — ', '目录占用 — ') + escHtml(usageTxt) + '</div>' : '');
   }).catch(function(e) {
     if (e && e.httpStatus === 401) {
       // 会话失效不再只给一句死路提示：给一键跳转，用户点一下就能回到登录页。
-      box.innerHTML = '<div style="color:#f5222d;padding:8px 0">登录已失效，无法读取组件信息。'
-        + '<button class="btn btn-primary" style="margin-left:12px" onclick="aimsGoToLogin()">重新登录</button></div>';
+      box.innerHTML = '<div style="color:#f5222d;padding:8px 0">' + L('Your session has expired; component info cannot be read.', '登录已失效，无法读取组件信息。')
+        + '<button class="btn btn-primary" style="margin-left:12px" onclick="aimsGoToLogin()">' + L('Sign in again', '重新登录') + '</button></div>';
       return;
     }
-    box.innerHTML = '<div style="color:#f5222d">加载失败：' + escHtml(e.message || e) + '</div>';
+    box.innerHTML = '<div style="color:#f5222d">' + L('Load failed: ', '加载失败：') + escHtml(e.message || e) + '</div>';
   });
 }
 

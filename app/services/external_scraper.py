@@ -43,6 +43,12 @@ class ScraperError(RuntimeError):
     specific enough to show directly in ExternalSyncLog.error_message."""
 
 
+def _first_line(exc: BaseException) -> str:
+    """Playwright 的错误信息带多行 Call log，界面上只要第一行。"""
+    lines = str(exc).strip().splitlines()
+    return lines[0] if lines else exc.__class__.__name__
+
+
 def _require_playwright():
     try:
         from playwright.sync_api import sync_playwright  # noqa: F401
@@ -64,13 +70,19 @@ def external_session(source: ExternalSource) -> Iterator["object"]:
     and surface it in the admin UI rather than a raw traceback.
     """
     _require_playwright()
+    from playwright.sync_api import Error as PWError
     from playwright.sync_api import TimeoutError as PWTimeoutError
     from playwright.sync_api import sync_playwright
 
     password = decrypt_secret(source.password_encrypted)
 
     with sync_playwright() as pw:
-        browser = pw.chromium.launch(headless=settings.PLAYWRIGHT_HEADLESS)
+        try:
+            browser = pw.chromium.launch(headless=settings.PLAYWRIGHT_HEADLESS)
+        except PWError as e:
+            raise ScraperError(
+                "无法启动浏览器内核（通常是还没执行 playwright install chromium）：" + _first_line(e)
+            ) from e
         context = browser.new_context(accept_downloads=True)
         page = context.new_page()
         try:
@@ -94,6 +106,13 @@ def external_session(source: ExternalSource) -> Iterator["object"]:
                     f"登录 {source.name} 超时/失败：找不到元素或登录后未出现预期页面 "
                     f"({e}). 请检查 login_url / *_selector 配置是否与站点当前页面一致。"
                 ) from e
+            except PWError as e:
+                # 证书错误 / 域名解析失败 / 连接被拒等：这是"URL 填错或站点不可达"最常见的形态，
+                # 以前只捕获了 TimeoutError，这些会变成 500 + 原始堆栈。
+                raise ScraperError(
+                    f"无法打开或操作 {source.name} 的登录页：{_first_line(e)}。"
+                    f"请检查 login_url 是否可访问（域名 / 证书 / 网络）以及 *_selector 配置。"
+                ) from e
 
             yield page
         finally:
@@ -107,6 +126,7 @@ def download_from_database(page, database: ExternalDatabase, download_dir: Path)
     button, and save the resulting file under `download_dir`. Returns the
     saved file's path.
     """
+    from playwright.sync_api import Error as PWError
     from playwright.sync_api import TimeoutError as PWTimeoutError
 
     download_dir.mkdir(parents=True, exist_ok=True)
@@ -142,4 +162,9 @@ def download_from_database(page, database: ExternalDatabase, download_dir: Path)
         raise ScraperError(
             f"数据库「{database.name}」下载超时/失败：找不到元素或未触发下载 ({e})。"
             f"请检查 list_url / download_selector / pre_download_steps 配置。"
+        ) from e
+    except PWError as e:
+        raise ScraperError(
+            f"数据库「{database.name}」下载失败：{_first_line(e)}。"
+            f"请检查 list_url 是否可访问以及 download_selector / pre_download_steps 配置。"
         ) from e
