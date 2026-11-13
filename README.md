@@ -204,6 +204,63 @@ pytest -v
 | `AI_EMBEDDING_DIM` | 需与 `knowledge_chunks.embedding` 的 `vector(N)` 维度一致 |
 | `CORS_ORIGINS` | 前端域名，逗号分隔 |
 
+## 管理员密码设置
+
+首次安装建管理员、已有账号改密码、忘了密码，都走下面这几条路。密码策略见本节末尾。
+
+### 首次安装：setup 向导
+
+```bash
+AIMS-Backend.exe setup            # 打包好的 EXE
+python run_standalone.py setup    # 源码部署
+```
+
+一步完成密钥 + HTTPS 证书 + 首个管理员。密码交互输入、不回显，须满足密码策略；连续 3 次不合格会退出（其他配置已保存，再运行一次即可）。
+
+### 已安装：管理员命令行（在服务器本机上用，不经过网络接口）
+
+```bash
+AIMS-Backend.exe list                        # 查看账号（superuser / active / DISABLED）
+AIMS-Backend.exe create-admin <用户名>        # 新建管理员（交互输密码）
+AIMS-Backend.exe reset-password <用户名>      # 重置密码 + 重新启用 + 让所有旧会话失效
+AIMS-Backend.exe activate <用户名>            # 仅重新启用
+```
+
+源码部署对应 `python scripts/manage_users.py <子命令> <用户名>`，
+或 `python -m app.cli create-admin --username <用户名>`（另有 `reset-password` / `unlock` 清除登录失败锁定）。
+
+### EXE 下跑命令行之前：先开调试控制台
+
+EXE 是按无控制台（GUI 子系统）打包的，直接在 cmd 里跑上面的命令看不到输出、也等不到密码输入。
+先在同一个 cmd 窗口里执行，再跑命令（新开窗口要重设）：
+
+```bash
+set AIMS_DEBUG_CONSOLE=1
+AIMS-Backend.exe list
+```
+
+注意：该模式下密码输入关不掉回显，输密码时会显示在屏幕上。
+不想让密码出现在屏幕上，用环境变量传密码（不要把密码写在命令行参数里，会进 shell 历史和进程列表）：
+
+```bash
+set AIMS_ADMIN_PW=<新密码>
+AIMS-Backend.exe reset-password admin --password-env AIMS_ADMIN_PW
+```
+
+### 密码策略（`app/core/security.py: validate_password_strength`）
+
+- 至少 12 位，最多 72 字节（bcrypt 上限，超了直接拒绝，不会静默截断）。
+- 不能包含用户名（用户名 ≥ 3 位时）。
+- 至少 6 个不同字符（太重复会被拒）。
+- 大写字母 / 小写字母 / 数字 / 符号，四类里至少混 3 类。
+- 不能是常见密码。
+
+### 其他方式
+
+- 空库首次启动注入管理员：环境变量 `BOOTSTRAP_ADMIN_USERNAME` / `BOOTSTRAP_ADMIN_PASSWORD`（须满足密码策略），优先于开发管理员。
+- 开发环境空库自动创建的开发管理员：`ALLOW_DEV_ADMIN` / `DEV_ADMIN_USERNAME` / `DEV_ADMIN_PASSWORD`（默认 `admin` / `admin123`），生产环境禁止，强制开启会拒绝启动。
+- 登录状态下改密码：`POST /api/v1/auth/change-password`。
+
 ## 后续可扩展方向
 
 1. 补充 Lab / Knowledge / System 模块的 REST API（表结构已就绪，Maintenance / Assets 已完成）。
