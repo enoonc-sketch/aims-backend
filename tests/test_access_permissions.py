@@ -142,3 +142,37 @@ def test_logout_clears_ui_state(anon_client, seeded):
     assert access.snapshot()["logged_in"] is True
     anon_client.post("/api/v1/auth/logout", headers=hb, json={"refresh_token": r["refresh_token"]})
     assert access.snapshot()["logged_in"] is False
+
+
+# ------------------------------------------------------------- 托盘报警摘要
+def _mk_alarm(db, severity, status="active", msg="x"):
+    from app.models.alarm import Alarm
+    from app.models.device import Device
+    dev = db.query(Device).first()
+    if dev is None:
+        dev = Device(device_code="D1", name="d1"); db.add(dev); db.commit(); db.refresh(dev)
+    a = Alarm(device_id=dev.id, severity=severity, status=status, message=msg)
+    db.add(a); db.commit(); db.refresh(a)
+    return a
+
+
+def test_ui_state_alarm_summary(anon_client, seeded, monkeypatch):
+    monkeypatch.setenv("AIMS_LAUNCHER_TOKEN", "tok-123")
+    hdr = {"X-AIMS-Launcher": "tok-123"}
+    assert "alarms" not in anon_client.get("/api/v1/auth/ui-state", headers=hdr).json()   # 默认不带，省得每 5 秒查库
+    empty = anon_client.get("/api/v1/auth/ui-state?alarms=1", headers=hdr).json()["alarms"]
+    assert empty == {"active": 0, "critical": 0, "max_id": 0, "latest": []}
+    _mk_alarm(seeded, "warning", msg="压力偏低")
+    resolved = _mk_alarm(seeded, "critical", status="resolved")
+    crit = _mk_alarm(seeded, "critical", msg="温度过高" + "!" * 300)
+    got = anon_client.get("/api/v1/auth/ui-state?alarms=1", headers=hdr).json()["alarms"]
+    assert got["active"] == 2 and got["critical"] == 1
+    assert got["max_id"] == crit.id and resolved.id < crit.id          # max_id 含已处理的，处理掉报警不会让它倒退
+    assert [a["id"] for a in got["latest"]] == [crit.id, crit.id - 2]  # 只列未处理的，新的在前
+    assert len(got["latest"][0]["message"]) == 120                     # 过长消息被截断
+
+
+def test_ui_state_alarm_summary_needs_the_launcher_token(anon_client, seeded, monkeypatch):
+    monkeypatch.setenv("AIMS_LAUNCHER_TOKEN", "tok-123")
+    assert anon_client.get("/api/v1/auth/ui-state?alarms=1").status_code == 404
+    assert anon_client.get("/api/v1/auth/ui-state?alarms=1", headers={"X-AIMS-Launcher": "bad"}).status_code == 404

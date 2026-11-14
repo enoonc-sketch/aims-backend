@@ -35,12 +35,14 @@ DEFAULT_TOGGLE_HOTKEY = "ctrl+alt+a"
 
 def load_launcher_prefs(path: Path) -> dict:
     """读启动器偏好：文件缺失/损坏/值非法时回默认值，绝不因偏好文件坏了而起不来。"""
-    prefs = {"close_to_tray_notified": False, "toggle_hotkey": DEFAULT_TOGGLE_HOTKEY}
+    prefs = {"close_to_tray_notified": False, "toggle_hotkey": DEFAULT_TOGGLE_HOTKEY, "alarm_notify": True}
     try:
         data = json.loads(Path(path).read_text(encoding="utf-8"))
         if isinstance(data, dict):
             if isinstance(data.get("close_to_tray_notified"), bool):
                 prefs["close_to_tray_notified"] = data["close_to_tray_notified"]
+            if isinstance(data.get("alarm_notify"), bool):
+                prefs["alarm_notify"] = data["alarm_notify"]
             hotkey = data.get("toggle_hotkey")
             if isinstance(hotkey, str) and win.parse_hotkey(hotkey):
                 prefs["toggle_hotkey"] = hotkey.strip().lower()
@@ -208,6 +210,8 @@ class App:
         self._shortcuts_open = False
         self._hotkey_listener = None
         self._ui_state: dict | None = None      # 托盘菜单显示的登录状态；None = 取不到
+        self._alarms: dict | None = None        # 最近一次取到的报警摘要；None = 取不到
+        self._alarm_baseline: int | None = None  # 已经“见过”的最大报警 id；首次取到时只记下，不弹旧报警
         self.prefs_path = root / "aims_data" / LAUNCHER_PREFS_NAME
         self.prefs = load_launcher_prefs(self.prefs_path)
 
@@ -258,13 +262,13 @@ class App:
         win.message_box(title, text, error=True)
 
     # ------------------------------------------------------- 界面登录状态（托盘显示）
-    def _fetch_ui_state(self) -> dict | None:
+    def _fetch_ui_state(self, with_alarms: bool = False) -> dict | None:
         """向后端问一次“界面现在谁登录着”。取不到（后端不是本启动器拉起的、刚重启…）返回 None。"""
         import json
         import urllib.request
 
         req = urllib.request.Request(
-            f"http://127.0.0.1:{self.supervisor.api_port}/api/v1/auth/ui-state",
+            f"http://127.0.0.1:{self.supervisor.api_port}/api/v1/auth/ui-state" + ("?alarms=1" if with_alarms else ""),
             headers={"X-AIMS-Launcher": self.supervisor.launcher_token})
         try:
             with urllib.request.urlopen(req, timeout=1.5) as resp:  # noqa: S310 - 本机回环
@@ -273,10 +277,17 @@ class App:
         except Exception:  # noqa: BLE001
             return None
 
-    def _refresh_ui_state(self) -> None:
-        state = self._fetch_ui_state()
+    def _refresh_ui_state(self, with_alarms: bool = False) -> None:
+        state = self._fetch_ui_state(with_alarms)
+        alarms_seen = isinstance(state, dict) and "alarms" in state
+        alarms = state.pop("alarms", None) if isinstance(state, dict) else None
         changed = state != self._ui_state
         self._ui_state = state
+        if alarms_seen:
+            changed = self._handle_alarms(alarms) or changed
+        elif state is None and self._alarms is not None:   # 后端连不上了：别一直显示旧的报警数
+            self._alarms = None
+            changed = True
         if changed and self.icon is not None:
             try:
                 self.icon.title = self._tray_title()
@@ -286,17 +297,61 @@ class App:
 
     def _start_ui_state_poller(self) -> None:
         def loop() -> None:
+            tick = 0
             while not self._exit.wait(5.0):
-                self._refresh_ui_state()
+                tick += 1
+                self._refresh_ui_state(with_alarms=(tick % 3 == 0))     # 登录状态每 5 秒；报警要查库，每 15 秒
 
-        self._refresh_ui_state()
+        self._refresh_ui_state(with_alarms=True)
         threading.Thread(target=loop, name="aims-ui-state", daemon=True).start()
 
     def _tray_title(self) -> str:
         st = self._ui_state
-        if st and st.get("logged_in"):
-            return f"AIMS 设备智能运维系统 — 已登录：{st.get('username', '')}"
-        return "AIMS 设备智能运维系统 — 未登录"
+        base = (f"AIMS 设备智能运维系统 — 已登录：{st.get('username', '')}"
+                if st and st.get("logged_in") else "AIMS 设备智能运维系统 — 未登录")
+        n = (self._alarms or {}).get("active", 0)
+        return base + (f" · 报警 {n}" if n else "")
+
+    def _handle_alarms(self, alarms: dict | None) -> bool:
+        """吃进一份新的报警摘要；有新报警就弹气泡。返回显示内容（菜单 / 提示文字）是否变了。"""
+        changed = alarms != self._alarms
+        self._alarms = alarms
+        if not isinstance(alarms, dict):
+            return changed
+        max_id = int(alarms.get("max_id") or 0)
+        if self._alarm_baseline is None:          # 第一次取到：只记下现状，不把启动前就有的报警当新报警弹
+            self._alarm_baseline = max_id
+            return changed
+        if max_id > self._alarm_baseline:
+            fresh = [a for a in alarms.get("latest", []) if int(a.get("id", 0)) > self._alarm_baseline]
+            self._alarm_baseline = max_id
+            if fresh and self.prefs.get("alarm_notify", True):
+                self._notify_alarm(fresh)
+        return changed
+
+    def _notify_alarm(self, fresh: list) -> None:
+        critical = any(a.get("severity") == "critical" for a in fresh)
+        text = str(fresh[0].get("message") or "有新的报警")
+        if len(fresh) > 1:
+            text += f"（另有 {len(fresh) - 1} 条）"
+        win.notify(self.icon, "AIMS 严重报警" if critical else "AIMS 新报警", text)
+
+    def _alarm_text(self, _item=None) -> str:
+        a = self._alarms
+        if not isinstance(a, dict):
+            return "当前报警：未获取"
+        n, c = int(a.get("active") or 0), int(a.get("critical") or 0)
+        if not n:
+            return "当前报警：无未处理"
+        return f"当前报警：{n} 条未处理" + (f"（严重 {c}）" if c else "")
+
+    def _menu_open_alarms(self) -> None:
+        """托盘“当前报警”：直接打开报警页（Edge --app 新窗口；未登录会先去登录，登录后再跳过来）。"""
+        win.open_app_window(self.supervisor.ui_url() + "#alarm")
+
+    def _menu_toggle_alarm_notify(self) -> None:
+        self.prefs["alarm_notify"] = not self.prefs.get("alarm_notify", True)
+        save_launcher_prefs(self.prefs_path, self.prefs)
 
     def _login_status_text(self, _item=None) -> str:
         st = self._ui_state
@@ -327,6 +382,8 @@ class App:
         yield Item(self._login_user_text, None, enabled=False)
         yield Item(self._login_permission_text, None, enabled=False)
         yield Menu.SEPARATOR
+        yield Item(self._alarm_text, self._menu_open_alarms)           # 点一下直达报警页
+        yield Menu.SEPARATOR
         yield Item("打开 AIMS 主界面", self._menu_open_ui, default=True)
         yield Item("设置", self._menu_open_settings)
         yield Item("用户快捷键", self._menu_shortcuts)
@@ -336,6 +393,8 @@ class App:
         yield Item("生成诊断报告", self._menu_doctor)
         yield Item("重启服务", self._menu_restart)
         yield Item("开机自动启动", self._menu_autostart, checked=lambda _i: win.autostart_enabled())
+        yield Item("新报警弹出气泡通知", self._menu_toggle_alarm_notify,
+                   checked=lambda _i: bool(self.prefs.get("alarm_notify", True)))
         yield Menu.SEPARATOR
         yield Item(f"版本 {_version()}", lambda: win.message_box(
             PRODUCT_NAME, f"版本：{_version()}\n安装目录：{self.root}\n数据目录：{self.supervisor.layout.data_dir}\n"

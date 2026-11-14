@@ -23,6 +23,6 @@ EXE before the FastAPI app is ever imported.
 """
 from __future__ import annotations
 
-APP_VERSION = "1.0.11"
+APP_VERSION = "1.0.12"
 
 __all__ = ["APP_VERSION"]

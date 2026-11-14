@@ -38,7 +38,7 @@ from sqlalchemy import delete, select, update
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user, get_current_user_optional, get_db, security_scheme, user_must_change_password
-from app.services import access
+from app.services import access, tray_summary
 from app.core.config import settings
 from app.core.security import (
     decode_access_token,
@@ -431,9 +431,23 @@ def report_ui_state(
 
 
 @router.get("/ui-state")
-def read_ui_state(x_aims_launcher: Optional[str] = Header(default=None)):
-    """启动器（托盘）读取界面登录状态。需要启动器启动后端时注入的口令；没有口令（非托盘运行）时不开放。"""
+def read_ui_state(
+    alarms: bool = False,
+    x_aims_launcher: Optional[str] = Header(default=None),
+    db: Session = Depends(get_db),
+):
+    """启动器（托盘）读取界面登录状态。需要启动器启动后端时注入的口令；没有口令（非托盘运行）时不开放。
+
+    ``?alarms=1`` 时附带报警摘要（未处理数 / 严重数 / 最新几条 / 历史最大 id），托盘据此显示并在有新报警时弹气泡。
+    摘要要查库，所以托盘不是每次都带，查不出来就给 null。
+    """
     expected = os.environ.get("AIMS_LAUNCHER_TOKEN", "")
     if not expected or not x_aims_launcher or not hmac.compare_digest(expected, x_aims_launcher):
         raise HTTPException(status_code=404, detail="Not found")
-    return access.snapshot()
+    snap = access.snapshot()
+    if alarms:
+        try:
+            snap["alarms"] = tray_summary.alarm_summary(db)
+        except Exception:  # noqa: BLE001 - 库暂时不可用不能让托盘的登录信息也取不到
+            snap["alarms"] = None
+    return snap

@@ -171,6 +171,8 @@ class PyPackageOut(BaseModel):
     import_name: str
     installed: bool
     version: Optional[str] = None
+    installable: bool = True    # False = 安装版（冻结 EXE）：不能在线安装
+    bundled: bool = False       # True = 构建时已内置进安装包
 
 
 class PyPackageInstallResult(BaseModel):

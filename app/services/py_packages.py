@@ -127,10 +127,18 @@ def is_installed(import_name: str) -> tuple[bool, Optional[str]]:
 
 
 def list_packages() -> list[dict]:
+    """目录 + 当前安装状态。
+
+    ``installable``：本进程能不能在线 pip 安装。安装版的后端是 PyInstaller 冻结的 EXE，没有
+    pip / site-packages，一律 False；这时“已安装”其实是“构建时已内置进安装包”，``bundled``
+    就是这个意思。界面据此不显示装不了的“安装”按钮，而是直说“已内置 / 本安装包未内置”。
+    """
+    frozen = is_frozen()
     out = []
     for p in PACKAGES:
         installed, version = is_installed(p["import_name"])
-        out.append({**{k: v for k, v in p.items() if k != "pip_args"}, "installed": installed, "version": version})
+        out.append({**{k: v for k, v in p.items() if k != "pip_args"}, "installed": installed, "version": version,
+                    "installable": not frozen, "bundled": bool(frozen and installed)})
     return out
 
 
