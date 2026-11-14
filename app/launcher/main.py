@@ -205,10 +205,6 @@ class App:
         self.supervisor = Supervisor(root, progress=self._progress)
         self._exit = threading.Event()
         self.log_path = _setup_logging(root)
-        # 原生桌面窗口（pywebview）：点 × 只是藏起来，窗口对象留着以后再显示。
-        self.window = None
-        self._window_visible = False
-        self._quitting = False
         self._shortcuts_open = False
         self._hotkey_listener = None
         self._ui_state: dict | None = None      # 托盘菜单显示的登录状态；None = 取不到
@@ -238,20 +234,15 @@ class App:
         self._start_backend_watchdog()
         self._start_hotkey_listener()
         self._start_ui_state_poller()
-        # 桌面窗口模式（计划书 3.1-A）：由 run() 里的 pywebview 原生窗口负责打开界面，
-        # 这里就不再先用 Edge --app 弹一个窗口（避免双窗口）。
-        if self.open_ui and not self._use_desktop_window():
+        # 界面只用系统自带的 Edge --app 窗口打开（不再用内嵌原生窗口）。
+        if self.open_ui:
             url = self.supervisor.ui_url()
             how, proc = win.open_app_window_proc(url)
             logger.info("UI opened (%s): %s", how, url)
             if proc is not None:
-                # 浏览器窗口模式：窗口关了应用本来就留在托盘；第一次关时提醒一声。
+                # 窗口关了应用本来就留在托盘；第一次关时提醒一声。
                 self._watch_browser_window(proc)
         return True
-
-    def _use_desktop_window(self) -> bool:
-        """托盘可用且 pywebview 可导入时，用原生桌面窗口代替浏览器窗口。"""
-        return bool(self.want_tray and win.webview_available())
 
     def _fail(self, title: str, message: str) -> None:
         detail = ""
@@ -355,15 +346,8 @@ class App:
     def _settings_url(self) -> str:
         return self.supervisor.ui_url() + "#sys/settings"
 
-    def _set_window(self, window) -> None:
-        self.window = window
-        self._window_visible = True
-
     def _on_close_to_tray(self) -> None:
-        """点 × 只是把窗口藏到托盘：应用继续跑；第一次提醒用户一声。"""
-        if self._quitting:
-            return
-        self._window_visible = False
+        """浏览器窗口关了：应用继续留在托盘跑；第一次提醒用户一声。"""
         if not self.prefs.get("close_to_tray_notified"):
             self.prefs["close_to_tray_notified"] = True
             save_launcher_prefs(self.prefs_path, self.prefs)
@@ -373,33 +357,17 @@ class App:
         logger.info("main window closed to tray")
 
     def _menu_open_ui(self) -> None:
-        if self.window is not None and win.show_desktop_window(self.window):
-            self._window_visible = True
-            return
         win.open_app_window(self.supervisor.ui_url())
 
     def _menu_open_settings(self) -> None:
-        """托盘“设置”：直接打开系统设置 → 设置页（已有原生窗口就复用它）。"""
-        url = self._settings_url()
-        if self.window is not None:
-            win.show_desktop_window(self.window)
-            self._window_visible = True
-            if win.load_desktop_url(self.window, url):
-                return
-        win.open_app_window(url)
+        """托盘“设置”：直接打开系统设置 → 设置页。"""
+        win.open_app_window(self._settings_url())
 
     def _menu_shortcuts(self) -> None:
         show_shortcuts_window(self)
 
     def _toggle_main_window(self) -> None:
-        """全局热键：显示/隐藏主窗口。没有原生窗口时（浏览器模式）就打开界面。"""
-        if self.window is not None:
-            if self._window_visible:
-                if win.hide_desktop_window(self.window):
-                    self._window_visible = False
-            elif win.show_desktop_window(self.window):
-                self._window_visible = True
-            return
+        """全局热键：打开主界面（Edge --app 窗口）。"""
         win.open_app_window(self.supervisor.ui_url())
 
     def _watch_browser_window(self, proc) -> None:
@@ -490,13 +458,7 @@ class App:
         self.supervisor = Supervisor(self.root, progress=self._progress)
         ok = self.start()
         if ok:
-            # 原生窗口还在就复用它（重新加载一次连回新起的后端），没有才开浏览器窗口。
-            if self.window is not None:
-                win.show_desktop_window(self.window)
-                self._window_visible = True
-                win.load_desktop_url(self.window, self.supervisor.ui_url())
-            else:
-                win.open_app_window(self.supervisor.ui_url())
+            win.open_app_window(self.supervisor.ui_url())
         else:
             win.message_box("重启失败", "请查看日志或生成诊断报告。", error=True)
 
@@ -506,8 +468,6 @@ class App:
             win.message_box("设置失败", "无法写入开机启动项（可能被安全软件拦截）。", error=True)
 
     def _menu_quit(self) -> None:
-        # 先立“正在退出”旗：销毁窗口时若触发 closing 事件，放行，不再当成“最小化到托盘”。
-        self._quitting = True
         self._exit.set()
         if self._hotkey_listener is not None:
             try:
@@ -515,12 +475,6 @@ class App:
             except Exception:  # noqa: BLE001
                 pass
             self._hotkey_listener = None
-        if self.window is not None:
-            try:
-                win.destroy_desktop_window(self.window)
-            except Exception:  # noqa: BLE001
-                pass
-            self.window = None
         if self.icon is not None:
             try:
                 self.icon.stop()
@@ -555,7 +509,7 @@ class App:
         """所有界面模式通用的后端看门狗。
 
         以前只有 `--headless` 排障模式会轮询后端退出码；正式用户走的是
-        WebView2 窗口 / 托盘，后端一崩，窗口只会白屏，日志也没人看，启动器
+        浏览器窗口 / 托盘，后端一崩，窗口只会白屏，日志也没人看，启动器
         更不会把它拉起来——"后台服务异常"在需求里必须可发现、可恢复。
         """
         if not self.supervisor.started_backend_here:
@@ -613,10 +567,6 @@ class App:
             if getattr(sys, "frozen", False) and "--quiet" not in sys.argv:
                 pass
             return 3
-        # AIMS Desktop 原生窗口（pywebview/WebView2）：点 × 只是藏到托盘，应用不退出；
-        # 托盘转后台线程继续提供备份/诊断/退出菜单；WebView2 缺失时走下面传统路径。
-        if self._use_desktop_window() and not self._exit.is_set():
-            return self._run_desktop_window()
         if not self.want_tray or not win.tray_available():
             if self.want_tray:
                 logger.warning("tray unavailable on this platform — running without tray")
@@ -632,40 +582,6 @@ class App:
             if not self._exit.is_set():
                 self._menu_quit()
         return 0
-
-    def _run_desktop_window(self) -> int:
-        """原生窗口模式：主线程跑 WebView2 消息循环，托盘在后台线程。
-
-        点 × 不再退出：窗口藏到托盘，应用继续跑；只有托盘「退出程序」
-        才会真正下线（它先销毁窗口，webview.start() 随之返回）。
-        托盘起不来时不启用“最小化到托盘”（否则窗口藏了就找不回来），
-        点 × 仍按老行为退出。
-        """
-        logger.info("desktop window mode (pywebview/WebView2)")
-        icon_path = self.root / "assets" / "aims.ico"
-        self.icon = win.build_tray_icon(icon_path)
-        tray_detached = False
-        if self.icon is not None:
-            tray_detached = win.run_tray_detached(self.icon, list(self.menu_items()))
-            if tray_detached:
-                win.notify(self.icon, PRODUCT_NAME, "AIMS 已在运行，关闭窗口后仍在托盘后台运行")
-        try:
-            win.run_desktop_window(
-                self.supervisor.ui_url(), title=f"{PRODUCT_NAME} {_version()}",
-                on_close_to_tray=self._on_close_to_tray if tray_detached else None,
-                on_window=self._set_window,
-                is_quitting=lambda: self._quitting,
-            )
-            # 只有窗口被真正销毁（退出程序）才会走到这里。
-            return 0
-        except Exception as exc:  # noqa: BLE001
-            # WebView2 Runtime 缺失等环境问题：回退到浏览器窗口，功能不缩水
-            logger.warning("desktop window unavailable (%s); falling back to browser", exc)
-            win.open_app_window(self.supervisor.ui_url())
-            return self._run_headless()
-        finally:
-            if not self._exit.is_set():
-                self._menu_quit()
 
     def _run_headless(self) -> int:
         """无托盘：前台守到用户 Ctrl+C，或在后端异常退出时结束。"""

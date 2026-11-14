@@ -16,7 +16,7 @@
 ; 升版时 MyAppVersion 要和 app/main.py 里的版本号一起改。
 
 #define MyAppName "AIMS Backend"
-#define MyAppVersion "1.0.10"
+#define MyAppVersion "1.0.11"
 #define MyAppExeName "AIMS-Backend.exe"
 
 [Setup]
@@ -70,38 +70,3 @@ Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: de
 
 [Run]
 Filename: "{app}\{#MyAppExeName}"; Description: "安装完成后立即运行"; Flags: nowait postinstall skipifsilent runasoriginaluser
-
-[Code]
-{ 检查 WebView2 Runtime：桌面窗口需要它。没有也能装、也能跑，
-  程序会回退到浏览器并提示；所以只提示、不阻止安装。
-  GUID F3017226-FE2A-4295-8BDF-00C3A9A7E4C5 已对照微软文档确认。
-  （注意：这段注释里不能出现花括号——Pascal 注释不嵌套，
-  花括号里的右括号会提前结束注释，ISCC 就会报 Syntax error。）
-  运行时可能是"每台机器"（HKLM）或"每用户"（HKCU）安装，三处都要查。 }
-function WebView2Available(): Boolean;
-begin
-  Result := RegKeyExists(HKLM, 'SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}');
-  if not Result then
-    Result := RegKeyExists(HKLM, 'SOFTWARE\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}');
-  if not Result then
-    Result := RegKeyExists(HKCU, 'Software\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}');
-end;
-
-procedure CurStepChanged(CurStep: TSetupStep);
-var
-  ErrorCode: Integer;
-begin
-  if (CurStep = ssPostInstall) and (not WizardSilent()) then
-  begin
-    if not WebView2Available() then
-    begin
-      if MsgBox('没有检测到 WebView2 Runtime。' + #13#10#13#10 +
-                '程序可以正常安装；没有它时界面会在系统浏览器里打开，' +
-                '而不是桌面窗口。' + #13#10 +
-                '需要桌面窗口的话，请安装 WebView2 Runtime（免费，微软官方提供），' +
-                '装好后重启本程序。' + #13#10#13#10 +
-                '现在打开下载页面吗？', mbInformation, MB_YESNO) = IDYES then
-        ShellExec('open', 'https://developer.microsoft.com/microsoft-edge/webview2/', '', '', SW_SHOWNORMAL, ewNoWait, ErrorCode);
-    end;
-  end;
-end;

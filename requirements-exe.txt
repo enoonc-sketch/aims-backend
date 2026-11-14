@@ -29,9 +29,3 @@ openpyxl>=3.1.5
 xlrd>=2.0.1
 pypdf>=7.0.1
 pyinstaller>=6.15.0
-# Desktop window (0.5.4): pywebview embeds the /ui page in a native window
-# instead of opening the system browser. PyPI 6.2.1 (2026-04-15), pure-Python
-# wheel (py3-none-any), Python >=3.8; on Windows it uses Edge WebView2 via
-# pythonnet + the system WebView2 Runtime (Windows 11 ships it; Windows 10
-# normally has it via Edge updates).
-pywebview==6.2.1

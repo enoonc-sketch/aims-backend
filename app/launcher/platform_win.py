@@ -288,24 +288,10 @@ def create_shortcut(path: Path, target: Path, *, args: str = "", workdir: Path |
 
 
 # --------------------------------------------------------------------------- #
-# AIMS Desktop 原生窗口（pywebview / Edge WebView2）
+# 托盘（后台线程）
 # --------------------------------------------------------------------------- #
-def webview_available() -> bool:
-    """pywebview 是否可用（Windows 上经由 Edge WebView2 渲染）。
-
-    WebView2 Runtime 在 Windows 11 随系统自带；缺失时这里返回 False，
-    启动器自动回退到 Edge --app 窗口 / 系统浏览器，功能完全等价。
-    """
-    try:
-        import webview  # noqa: F401
-
-        return True
-    except Exception:  # noqa: BLE001
-        return False
-
-
 def run_tray_detached(icon, items: Iterable) -> bool:
-    """在后台线程里跑托盘图标（供主线程跑 GUI 消息循环的窗口模式用）。
+    """在后台线程里跑托盘图标。
 
     起不来（窗口类注册失败、Shell_NotifyIconW 失败等）返回 False，调用方回退到
     "托盘在主线程" 的传统模式。
@@ -316,105 +302,6 @@ def run_tray_detached(icon, items: Iterable) -> bool:
         return True
     except Exception as exc:  # noqa: BLE001
         logger.warning("detached tray failed: %s", exc)
-        return False
-
-
-def run_desktop_window(url: str, *, title: str = "AIMS", width: int = 1280,
-                       height: int = 800, on_close_to_tray=None,
-                       on_window=None, is_quitting=None) -> None:
-    """以原生桌面窗口打开主界面，阻塞到窗口被真正销毁。
-
-    与 run_standalone._open_ui_window 相同的注意点：不设 on_top=True
-    （pywebview 6.2.1 + EdgeChromium 在激活压力下会死锁，见 r0x0r/pywebview#1823）。
-
-    on_close_to_tray: 传了它，点 × 不会关掉窗口，而是隐藏窗口并调这个回调
-    （托盘继续跑，应用不退出）；回调里通常发一次托盘通知。不传则点 ×
-    直接关窗口（老行为）。on_window: 窗口建好后调一次，传窗口对象，
-    调用方留着它以后 show()/hide()/load_url()。is_quitting: 退出程序时
-    销毁窗口也可能触发 closing 事件，传一个“正在退出”的判断，正在退出
-    就放行（不拦截、不隐藏），否则退出会被自己的拦截挡住。
-    """
-    import webview
-
-    try:  # pywebview 5+：允许页面里的 <a download>（CSV/Excel 导出）弹出保存对话框
-        webview.settings["ALLOW_DOWNLOADS"] = True
-    except Exception:  # noqa: BLE001
-        pass
-    window = webview.create_window(title, url, width=width, height=height,
-                                   resizable=True, text_select=True)
-    if window is not None and on_close_to_tray is not None:
-        def _on_closing():
-            if is_quitting is not None and is_quitting():
-                return None  # 正在退出程序：放行，让窗口真正关掉
-            # pywebview：closing 处理返回 False 就取消关闭。窗口只是藏起来，
-            # 事件循环继续跑，托盘菜单 / 快捷键随时能再把它叫出来。
-            try:
-                window.hide()
-            except Exception:  # noqa: BLE001
-                pass
-            try:
-                on_close_to_tray()
-            except Exception:  # noqa: BLE001
-                logger.exception("close-to-tray callback failed")
-            return False
-
-        try:
-            window.events.closing += _on_closing
-        except Exception:  # noqa: BLE001
-            logger.warning("could not hook window closing event; close will quit")
-    if window is not None and on_window is not None:
-        try:
-            on_window(window)
-        except Exception:  # noqa: BLE001
-            pass
-    webview.start()
-
-
-def show_desktop_window(window) -> bool:
-    """把藏起来的原生窗口再显示出来（托盘菜单 / 快捷键用）。"""
-    if window is None:
-        return False
-    try:
-        window.show()
-        return True
-    except Exception:  # noqa: BLE001
-        logger.warning("show desktop window failed")
-        return False
-
-
-def hide_desktop_window(window) -> bool:
-    """把原生窗口藏到托盘（快捷键切换用）。"""
-    if window is None:
-        return False
-    try:
-        window.hide()
-        return True
-    except Exception:  # noqa: BLE001
-        logger.warning("hide desktop window failed")
-        return False
-
-
-def destroy_desktop_window(window) -> bool:
-    """真正销毁原生窗口（退出程序时用；会让 webview.start() 返回）。"""
-    if window is None:
-        return False
-    try:
-        window.destroy()
-        return True
-    except Exception:  # noqa: BLE001
-        logger.warning("destroy desktop window failed")
-        return False
-
-
-def load_desktop_url(window, url: str) -> bool:
-    """让已有的原生窗口跳到指定地址（例如托盘“设置”直接打开设置页）。"""
-    if window is None:
-        return False
-    try:
-        window.load_url(url)
-        return True
-    except Exception:  # noqa: BLE001
-        logger.warning("load desktop url failed")
         return False
 
 

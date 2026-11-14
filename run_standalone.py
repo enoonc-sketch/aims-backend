@@ -335,64 +335,24 @@ def _write_crash_log(base: Path, exc: BaseException) -> Path:
 
 
 def _open_ui_window(base_url: str, settings) -> bool:
-    """Open the UI in a pywebview desktop window.
+    """Open the UI in the system browser (Edge --app window when available).
 
-    Returns True only if a window was actually shown (webview.start() ran
-    until the window was closed). Any failure falls back to the system
-    browser and returns False; the server keeps running either way.
+    No embedded native window: everything the window needs is already on
+    the computer. Always returns False — the browser runs in its own
+    process, so the caller keeps waiting on the server thread until Ctrl+C.
     """
-    # TLS mode: WebView2 cannot show the self-signed cert (cert-error page
-    # with no click-through), and the HTTPS middleware rejects plaintext
-    # http with 403 (app/core/middleware.py:43-64). Keep the browser here,
-    # where the user can click through the cert warning.
-    if getattr(settings, "tls_direct", False) or getattr(settings, "https_required", False):
-        print("TLS is on: opening the UI in the system browser (the desktop window needs plain http).")
-        try:
-            webbrowser.open(f"{base_url}/ui")
-        except Exception:
-            pass
-        return False
-    # Desktop window only for the frozen EXE; `python run_standalone.py`
-    # from source keeps the old browser behaviour.
-    if not getattr(sys, "frozen", False):
-        try:
-            webbrowser.open(f"{base_url}/ui")
-        except Exception:
-            pass
-        return False
+    # TLS mode: the browser shows the self-signed cert warning and the user
+    # clicks through it (the HTTPS middleware rejects plaintext http with 403).
     try:
-        import webview
-    except ImportError:
-        print("pywebview is not installed; opening the UI in the system browser.")
+        from app.launcher import platform_win as _win
+
+        _win.open_app_window(f"{base_url}/ui")
+    except Exception:
         try:
             webbrowser.open(f"{base_url}/ui")
         except Exception:
             pass
-        return False
-    try:
-        try:  # pywebview 5+: allow <a download> (CSV export) to show a save dialog
-            webview.settings["ALLOW_DOWNLOADS"] = True
-        except Exception:
-            pass
-        window = webview.create_window(
-            "AIMS Backend", f"{base_url}/ui",
-            width=1280, height=800,
-            resizable=True, text_select=True,
-            # NOTE: do NOT set on_top=True — pywebview 6.2.1 has a known
-            # EdgeChromium deadlock with on_top under activation load
-            # (r0x0r/pywebview#1823). sing-box sets on_top=True; do not copy it.
-        )
-        webview.start()
-        return True
-    except Exception as e:
-        print(f"Desktop window failed ({e}); opening the UI in the system browser.")
-        print("If WebView2 Runtime is missing, install it from:")
-        print("https://developer.microsoft.com/microsoft-edge/webview2/")
-        try:
-            webbrowser.open(f"{base_url}/ui")
-        except Exception:
-            pass
-        return False
+    return False
 
 
 def _sqlite_db_path() -> Path | None:
@@ -810,10 +770,9 @@ def main() -> int:
         _hold_app_mutex()  # lets the installer detect a running AIMS (after the single-instance check)
         _backup_database()  # before anything touches the DB (after the single-instance check)
 
-        # AIMS_OPEN_BROWSER semantics: "1" (default) = open the UI (a desktop
-        # window in the frozen EXE, the system browser otherwise); "0" = open
+        # AIMS_OPEN_BROWSER semantics: "1" (default) = open the UI in the
+        # system browser (Edge --app window when available); "0" = open
         # nothing, just serve (headless / remote use).
-        # TLS mode and source runs never open the window, see _open_ui_window().
         # Pass app object, NOT "app.main:app" string (breaks in frozen EXE)
         tls_kwargs = {}
         if settings.tls_direct:
@@ -833,10 +792,8 @@ def main() -> int:
         server = uvicorn.Server(config)
         _setup_file_logging(base)
 
-        # uvicorn runs in a daemon thread: the desktop window needs the main
-        # thread for its GUI loop. When the main thread ends (window closed),
-        # the process exits and the daemon thread dies with it.
-        # (Same pattern as the sing-box generator, app.py:279.)
+        # uvicorn runs in a daemon thread; the main thread waits for the
+        # server below until Ctrl+C. (Same pattern as the sing-box generator.)
         server_thread = threading.Thread(target=server.run, daemon=True)
         server_thread.start()
         _watch_parent(server)
@@ -867,20 +824,16 @@ def main() -> int:
                 _pause()  # keep the console open so a double-click user can read the message
             return 1
 
-        opened_window = False
         if os.environ.get("AIMS_OPEN_BROWSER", "1") == "1":
-            opened_window = _open_ui_window(base_url, settings)
-
-        if not opened_window:
-            # No window (source run, TLS mode, AIMS_OPEN_BROWSER=0, or the
-            # window fell back to the browser): wait for the server thread
-            # until Ctrl+C, exactly like the old blocking uvicorn.run().
-            try:
-                while server_thread.is_alive():
-                    server_thread.join(timeout=1)
-            except KeyboardInterrupt:
-                print("\nServer stopped.")
-        # Window was closed, or the wait loop ended: stop the server.
+            _open_ui_window(base_url, settings)
+        # The browser runs in its own process: wait for the server thread
+        # until Ctrl+C, exactly like the old blocking uvicorn.run().
+        try:
+            while server_thread.is_alive():
+                server_thread.join(timeout=1)
+        except KeyboardInterrupt:
+            print("\nServer stopped.")
+        # The wait loop ended: stop the server.
         server.should_exit = True
         server_thread.join(timeout=5)
         if runtime_info and runtime_info.get("managed"):

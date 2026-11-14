@@ -166,16 +166,6 @@ hiddenimports = [
     "xlrd",
 ]
 
-# pywebview 在 Windows 上会按需动态 import 具体后端（edgechromium / winforms 等），
-# PyInstaller 的静态分析扫描不到这些 import，必须显式加进 hiddenimports，
-# 否则打包后双击 exe 会直接报 "No such backend" 或窗口打不开。
-# (pyinstaller-hooks-contrib 的 hook-webview.py 只收数据文件和动态库，不收子模块。)
-hiddenimports += collect_submodules('webview')
-hiddenimports += [
-    'clr_loader',
-    'pythonnet',
-]
-
 # 本地部署层（安装/升级/备份/恢复/自检/桌面启动器）：
 # 这些模块由 `deploy` 子命令和 launcher 延迟导入（运行时按需 import），
 # PyInstaller 的静态分析看不到，必须显式收集，否则装完的 EXE 里

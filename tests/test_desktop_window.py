@@ -1,6 +1,7 @@
-"""Desktop-window launcher (run_standalone._open_ui_window / main), 0.5.4.
+"""UI opening (run_standalone._open_ui_window / main).
 
-pywebview has no GUI in CI/sandbox, so the `webview` module is always faked here.
+1.0.11: 界面只用系统自带的 Edge --app 窗口 / 系统浏览器，不再有内嵌原生窗口。
+_open_ui_window 永远只开浏览器、返回 False。
 """
 import importlib.util
 import sys
@@ -24,9 +25,13 @@ def _settings(tls_direct=False, https_required=False):
     return types.SimpleNamespace(tls_direct=tls_direct, https_required=https_required)
 
 
-def test_missing_webview_falls_back_to_browser(rs, monkeypatch):
-    monkeypatch.setattr(sys, "frozen", True, raising=False)
-    monkeypatch.setitem(sys.modules, "webview", None)  # `import webview` -> ImportError
+def test_open_ui_uses_browser_only(rs, monkeypatch):
+    """源码运行：只开浏览器，且绝不 import webview。"""
+    class _Boom(types.ModuleType):
+        def __getattr__(self, name):
+            raise AssertionError("webview must never be imported")
+
+    monkeypatch.setitem(sys.modules, "webview", _Boom("webview"))
     opened = []
     monkeypatch.setattr(rs.webbrowser, "open", lambda url, *a, **k: opened.append(url))
 
@@ -34,14 +39,19 @@ def test_missing_webview_falls_back_to_browser(rs, monkeypatch):
     assert opened == ["http://127.0.0.1:8000/ui"]
 
 
-def test_tls_mode_never_imports_webview(rs, monkeypatch):
+def test_frozen_exe_also_uses_browser(rs, monkeypatch):
+    """冻结 EXE：同样只开浏览器，不再有原生窗口。"""
     monkeypatch.setattr(sys, "frozen", True, raising=False)
+    opened = []
+    monkeypatch.setattr(rs.webbrowser, "open", lambda url, *a, **k: opened.append(url))
 
-    class _Boom(types.ModuleType):
-        def __getattr__(self, name):
-            raise AssertionError("webview must not be used in TLS mode")
+    assert rs._open_ui_window("http://127.0.0.1:8000", _settings()) is False
+    assert opened == ["http://127.0.0.1:8000/ui"]
 
-    monkeypatch.setitem(sys.modules, "webview", _Boom("webview"))
+
+def test_tls_mode_opens_browser(rs, monkeypatch):
+    """TLS 模式：浏览器里点过自签证书警告即可，同样只开浏览器。"""
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
     opened = []
     monkeypatch.setattr(rs.webbrowser, "open", lambda url, *a, **k: opened.append(url))
 
@@ -49,53 +59,6 @@ def test_tls_mode_never_imports_webview(rs, monkeypatch):
         opened.clear()
         assert rs._open_ui_window("https://127.0.0.1:8000", st) is False
         assert opened == ["https://127.0.0.1:8000/ui"]
-
-
-def test_source_run_uses_browser_not_window(rs, monkeypatch):
-    monkeypatch.delattr(sys, "frozen", raising=False)
-    fake = types.ModuleType("webview")
-    fake.create_window = lambda *a, **k: pytest.fail("window must not open from source")
-    monkeypatch.setitem(sys.modules, "webview", fake)
-    opened = []
-    monkeypatch.setattr(rs.webbrowser, "open", lambda url, *a, **k: opened.append(url))
-
-    assert rs._open_ui_window("http://127.0.0.1:8000", _settings()) is False
-    assert opened == ["http://127.0.0.1:8000/ui"]
-
-
-def test_frozen_exe_opens_window(rs, monkeypatch):
-    monkeypatch.setattr(sys, "frozen", True, raising=False)
-    calls = {}
-    fake = types.ModuleType("webview")
-    fake.settings = {}
-    fake.create_window = lambda title, url, **kw: calls.update(title=title, url=url, kw=kw)
-    fake.start = lambda *a, **k: calls.update(started=True)
-    monkeypatch.setitem(sys.modules, "webview", fake)
-    monkeypatch.setattr(rs.webbrowser, "open", lambda *a, **k: pytest.fail("browser must not open"))
-
-    assert rs._open_ui_window("http://127.0.0.1:8000", _settings()) is True
-    assert calls["url"] == "http://127.0.0.1:8000/ui" and calls["started"]
-    assert calls["kw"]["width"] == 1280 and calls["kw"]["height"] == 800
-    assert "on_top" not in calls["kw"]  # pywebview 6.2.1 EdgeChromium deadlock, see code comment
-    assert fake.settings.get("ALLOW_DOWNLOADS") is True
-
-
-def test_window_failure_falls_back_to_browser(rs, monkeypatch):
-    monkeypatch.setattr(sys, "frozen", True, raising=False)
-    fake = types.ModuleType("webview")
-    fake.settings = {}
-    fake.create_window = lambda *a, **k: None
-
-    def _boom(*a, **k):
-        raise RuntimeError("WebView2 Runtime missing")
-
-    fake.start = _boom
-    monkeypatch.setitem(sys.modules, "webview", fake)
-    opened = []
-    monkeypatch.setattr(rs.webbrowser, "open", lambda url, *a, **k: opened.append(url))
-
-    assert rs._open_ui_window("http://127.0.0.1:8000", _settings()) is False
-    assert opened == ["http://127.0.0.1:8000/ui"]
 
 
 def _wire_main(rs, monkeypatch, *, health, server_dies=False):

@@ -1,7 +1,8 @@
 """托盘行为测试：关闭到托盘、托盘菜单、快捷键窗口、全局热键。
 
-pywebview 在 CI/sandbox 里没有，这里用假模块；托盘本身是 ctypes 实现（tray_win32），菜单模型可直接测（与
+托盘本身是 ctypes 实现（tray_win32），菜单模型可直接测（与
 tests/test_desktop_window.py 同款做法），只测启动器自己的接线逻辑。
+界面只用系统自带的 Edge --app 窗口，不再有内嵌原生窗口。
 """
 import json
 import sys
@@ -20,73 +21,6 @@ App = launcher_main.App
 # --------------------------------------------------------------------------- #
 # 假 GUI 模块
 # --------------------------------------------------------------------------- #
-class _FakeMenuItem:
-    def __init__(self, text, action=None, default=False, checked=None, enabled=True):
-        self.enabled = enabled
-        self.text = text
-        self.action = action
-        self.default = default
-        self.checked = checked
-
-
-def _fake_pystray(monkeypatch):
-    """历史遗留的名字：托盘已不依赖 pystray，这里什么都不用假了（保留调用点，改动最小）。"""
-
-
-class _FakeEvent:
-    """pywebview 的 events.closing：支持 `+= 处理函数`（不是普通 list）。"""
-
-    def __init__(self):
-        self.handlers = []
-
-    def __iadd__(self, handler):
-        self.handlers.append(handler)
-        return self
-
-    def __len__(self):
-        return len(self.handlers)
-
-    def __getitem__(self, i):
-        return self.handlers[i]
-
-
-class _FakeWindow:
-    def __init__(self):
-        self.events = types.SimpleNamespace(closing=_FakeEvent())
-        self.hidden = 0
-        self.shown = 0
-        self.destroyed = 0
-        self.loaded = []
-
-    def hide(self):
-        self.hidden += 1
-
-    def show(self):
-        self.shown += 1
-
-    def destroy(self):
-        self.destroyed += 1
-
-    def load_url(self, url):
-        self.loaded.append(url)
-
-
-def _fake_webview(monkeypatch):
-    mod = types.ModuleType("webview")
-    mod.settings = {}
-    created = {}
-
-    def create_window(title, url, **kw):
-        w = _FakeWindow()
-        created.update(window=w, title=title, url=url, kw=kw)
-        return w
-
-    mod.create_window = create_window
-    mod.start = lambda *a, **k: created.update(started=True)
-    monkeypatch.setitem(sys.modules, "webview", mod)
-    return mod, created
-
-
 class _FakeIcon:
     def __init__(self):
         self.notified = []
@@ -115,9 +49,6 @@ class _FakeSupervisor:
 
 def _bare_app(**attrs):
     app = App.__new__(App)  # 不跑 __init__（避免建托盘/日志）
-    app._quitting = False
-    app._window_visible = False
-    app.window = None
     app.icon = None
     app._hotkey_listener = None
     app._ui_state = None
@@ -202,8 +133,7 @@ def test_apply_hotkey_persists_and_validates(tmp_path):
 # --------------------------------------------------------------------------- #
 # 托盘菜单
 # --------------------------------------------------------------------------- #
-def test_menu_items_have_settings_shortcuts_quit_and_keep_existing(monkeypatch, tmp_path):
-    _fake_pystray(monkeypatch)
+def test_menu_items_have_settings_shortcuts_quit_and_keep_existing(tmp_path):
     app = _bare_app(root=tmp_path, supervisor=_FakeSupervisor())
     from app.launcher.tray_win32 import Menu
     texts = ["SEPARATOR" if item is Menu.SEPARATOR else item.text for item in app.menu_items()]
@@ -212,7 +142,7 @@ def test_menu_items_have_settings_shortcuts_quit_and_keep_existing(monkeypatch, 
     texts = texts[4:]    # 跳过三项登录信息 + 分隔线
     assert texts == ["打开 AIMS 主界面", "设置", "用户快捷键", "立即备份数据库",
                      "打开数据目录", "打开日志目录", "生成诊断报告", "重启服务",
-                     "开机自动启动", "SEPARATOR", "版本 1.0.10", "退出程序"]
+                     "开机自动启动", "SEPARATOR", "版本 1.0.11", "退出程序"]
     assert "退出" not in texts  # 老的“退出”已改名“退出程序”，不要两个退出入口
 
 
@@ -224,50 +154,13 @@ def test_settings_url_points_at_settings_tab():
 # --------------------------------------------------------------------------- #
 # 关闭到托盘
 # --------------------------------------------------------------------------- #
-def test_desktop_window_close_hides_instead_of_quitting(monkeypatch):
-    _fake_webview(monkeypatch)
-    called = []
-    created_window = []
-
-    win.run_desktop_window("http://127.0.0.1:8000/ui",
-                           on_close_to_tray=lambda: called.append(1),
-                           on_window=created_window.append)
-    window = created_window[0]
-    assert len(window.events.closing) == 1
-    assert window.events.closing[0]() is False  # 返回 False = 取消关闭
-    assert window.hidden == 1 and called == [1]
-
-
-def test_desktop_window_close_allowed_while_quitting(monkeypatch):
-    _fake_webview(monkeypatch)
-    called = []
-    created_window = []
-
-    win.run_desktop_window("http://127.0.0.1:8000/ui",
-                           on_close_to_tray=lambda: called.append(1),
-                           on_window=created_window.append,
-                           is_quitting=lambda: True)
-    window = created_window[0]
-    assert window.events.closing[0]() is None  # 正在退出：放行，不隐藏、不通知
-    assert window.hidden == 0 and called == []
-
-
-def test_desktop_window_without_tray_callback_closes_normally(monkeypatch):
-    _fake_webview(monkeypatch)
-    created_window = []
-    win.run_desktop_window("http://127.0.0.1:8000/ui",
-                           on_window=created_window.append)
-    assert len(created_window[0].events.closing) == 0
-
-
 def test_close_to_tray_notifies_only_first_time(tmp_path):
     icon = _FakeIcon()
     app = _bare_app(prefs_path=tmp_path / "launcher.json",
                     prefs={"close_to_tray_notified": False,
                            "toggle_hotkey": launcher_main.DEFAULT_TOGGLE_HOTKEY},
-                    icon=icon, _window_visible=True)
+                    icon=icon)
     app._on_close_to_tray()
-    assert app._window_visible is False
     assert len(icon.notified) == 1
     assert "仍在后台运行" in icon.notified[0][1]
     assert json.loads((tmp_path / "launcher.json").read_text(encoding="utf-8"))[
@@ -276,60 +169,47 @@ def test_close_to_tray_notifies_only_first_time(tmp_path):
     assert len(icon.notified) == 1  # 第二次关窗口不再弹
 
 
-def test_menu_quit_destroys_window_and_stops_icon():
+def test_menu_quit_stops_icon_and_shuts_down():
     icon = _FakeIcon()
     sup = _FakeSupervisor()
-    window = _FakeWindow()
-    app = _bare_app(icon=icon, supervisor=sup, window=window)
+    app = _bare_app(icon=icon, supervisor=sup)
     app._menu_quit()
-    assert app._quitting is True and app._exit.is_set()
-    assert window.destroyed == 1
+    assert app._exit.is_set()
     assert icon.stopped is True
     assert sup.shutdown_called is True
 
 
 # --------------------------------------------------------------------------- #
-# 显示/隐藏主窗口
+# 打开主界面（热键 / 托盘菜单）：只用 Edge --app 窗口
 # --------------------------------------------------------------------------- #
-def test_toggle_main_window_hides_and_shows():
-    window = _FakeWindow()
-    app = _bare_app(window=window, _window_visible=True)
+def test_toggle_main_window_opens_ui(monkeypatch):
+    app = _bare_app(supervisor=_FakeSupervisor())
+    opened = []
+    monkeypatch.setattr(win, "open_app_window", lambda url: opened.append(url))
     app._toggle_main_window()
-    assert window.hidden == 1 and app._window_visible is False
-    app._toggle_main_window()
-    assert window.shown == 1 and app._window_visible is True
+    assert opened == ["http://127.0.0.1:8000/ui"]
 
 
-def test_open_ui_reuses_window_or_opens_browser(monkeypatch):
-    window = _FakeWindow()
-    app = _bare_app(window=window, supervisor=_FakeSupervisor())
-    monkeypatch.setattr(win, "open_app_window",
-                        lambda url: pytest.fail("should reuse the window"))
-    app._menu_open_ui()
-    assert window.shown == 1
-
-    app.window = None
+def test_open_ui_opens_browser(monkeypatch):
+    app = _bare_app(supervisor=_FakeSupervisor())
     opened = []
     monkeypatch.setattr(win, "open_app_window", lambda url: opened.append(url))
     app._menu_open_ui()
     assert opened == ["http://127.0.0.1:8000/ui"]
 
 
-def test_open_settings_reuses_window_with_deep_link(monkeypatch):
-    window = _FakeWindow()
-    app = _bare_app(window=window, supervisor=_FakeSupervisor())
-    monkeypatch.setattr(win, "open_app_window",
-                        lambda url: pytest.fail("should reuse the window"))
+def test_open_settings_opens_browser_with_deep_link(monkeypatch):
+    app = _bare_app(supervisor=_FakeSupervisor())
+    opened = []
+    monkeypatch.setattr(win, "open_app_window", lambda url: opened.append(url))
     app._menu_open_settings()
-    assert window.shown == 1
-    assert window.loaded == ["http://127.0.0.1:8000/ui#sys/settings"]
+    assert opened == ["http://127.0.0.1:8000/ui#sys/settings"]
 
 
 # --------------------------------------------------------------------------- #
 # 托盘里的登录信息：登录状态 / 登录人 / 使用权限
 # --------------------------------------------------------------------------- #
-def test_tray_login_items_are_read_only_and_come_first(monkeypatch, tmp_path):
-    _fake_pystray(monkeypatch)
+def test_tray_login_items_are_read_only_and_come_first(tmp_path):
     app = _bare_app(root=tmp_path, supervisor=_FakeSupervisor())
     items = list(app.menu_items())
     assert all(i.enabled is False for i in items[:3])
