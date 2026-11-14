@@ -69,6 +69,21 @@ def validate_password_strength(password: str, username: str | None = None) -> No
         raise ValueError("Password must mix at least 3 of: lowercase, uppercase, digits, symbols")
 
 
+def is_dev_default_credential(username: str, password: str) -> bool:
+    """True only for the explicitly allowed development administrator (admin / admin123 by default).
+
+    That one pair is exempt from the strength policy where an operator sets it by hand
+    (first-run bootstrap, `python -m app.cli`). It is never accepted by the HTTP API
+    (change-password / user creation still enforce the policy) and is always False in production."""
+    from app.core.config import settings
+
+    return bool(
+        settings.dev_admin_allowed
+        and username == (settings.DEV_ADMIN_USERNAME.strip() or "admin")
+        and password == settings.DEV_ADMIN_PASSWORD
+    )
+
+
 # ---------------------------------------------------------------------------
 # Password hashing (bcrypt only)
 # ---------------------------------------------------------------------------

@@ -44,7 +44,7 @@ def main() -> int:
 
     from sqlalchemy import select
 
-    from app.core.security import hash_password, validate_password_strength
+    from app.core.security import hash_password, is_dev_default_credential, validate_password_strength
     from app.db.init_db import _ensure_roles, create_tables
     from app.db.session import get_session_factory
     from app.models.system import User
@@ -78,16 +78,17 @@ def main() -> int:
 
         if args.cmd == "create-admin":
             try:
-                user = create_admin_user(db, args.username, password)
+                user = create_admin_user(db, args.username, password, allow_dev_default=True)
             except ValueError as e:
                 sys.exit(str(e))
             print(f"已创建管理员 {user.username}")
         else:
             # 0.5.0 的 validate_password_strength 不合格时抛 ValueError(secure 包是返回原因列表)
-            try:
-                validate_password_strength(password, args.username)
-            except ValueError as e:
-                sys.exit("密码不符合策略: " + str(e))
+            if not is_dev_default_credential(args.username, password):   # 开发默认 admin/admin123 放行（生产环境永不放行）
+                try:
+                    validate_password_strength(password, args.username)
+                except ValueError as e:
+                    sys.exit("密码不符合策略: " + str(e))
             user.hashed_password = hash_password(password)
             user.is_active = True
             invalidate_user_sessions(db, user, "password_changed")

@@ -89,9 +89,10 @@ def test_strong_secret_accepted():
 
 # ------------------------------------------------------------------ dev admin switch
 def test_dev_admin_allowed_only_outside_production():
-    # AIMS 1.0 phase 1 (report item H-2): unset ALLOW_DEV_ADMIN now means OFF
-    # even outside production — the convenience account must be opted into.
-    assert _mk(SECRET_KEY=GOOD_KEY).dev_admin_allowed is False
+    # Owner decision (after 1.0.0 phase 1 / H-2): the default admin/admin account is ON outside
+    # production when ALLOW_DEV_ADMIN is unset, so a fresh desktop instance can be logged into.
+    # Opt out with ALLOW_DEV_ADMIN=false; production ALWAYS refuses it.
+    assert _mk(SECRET_KEY=GOOD_KEY).dev_admin_allowed is True
     assert _mk(SECRET_KEY=GOOD_KEY, ALLOW_DEV_ADMIN=True).dev_admin_allowed is True
     assert _mk(SECRET_KEY=GOOD_KEY, ALLOW_DEV_ADMIN=False).dev_admin_allowed is False
     assert _mk(SECRET_KEY=GOOD_KEY, **_PROD).dev_admin_allowed is False
@@ -305,7 +306,8 @@ def test_dev_admin_created_on_empty_db_and_can_log_in(db_session, monkeypatch):
     init_mod._bootstrap_admin(db_session)
     u = db_session.scalar(select(User).where(User.username == "admin"))
     assert u and u.is_superuser and u.is_active
-    assert security.verify_password("admin123", u.hashed_password)
+    assert security.verify_password("admin123", u.hashed_password)     # 默认 admin / admin123
+    assert not security.verify_password("admin", u.hashed_password)
     init_mod._bootstrap_admin(db_session)                 # idempotent
     assert len(db_session.scalars(select(User)).all()) == 1
 
@@ -322,12 +324,56 @@ def test_injected_bootstrap_credentials_win_over_dev_admin(db_session, monkeypat
 
 def test_dev_admin_survives_startup_check_but_other_demo_accounts_do_not(db_session, monkeypatch):
     monkeypatch.setattr(settings, "ALLOW_DEV_ADMIN", True)
-    db_session.add(User(username="admin", hashed_password=security.hash_password("admin123"), is_superuser=True, is_active=True))
+    db_session.add(User(username="admin", hashed_password=security.hash_password("admin"), is_superuser=True, is_active=True))
     db_session.add(User(username="operator", hashed_password=security.hash_password("op123"), is_active=True))
     db_session.commit()
     assert init_mod._disable_legacy_demo_accounts(db_session) == 1
     assert db_session.scalar(select(User).where(User.username == "admin")).is_active is True
     assert db_session.scalar(select(User).where(User.username == "operator")).is_active is False
+
+
+def test_default_admin_admin_is_disabled_when_dev_admin_not_allowed(db_session, monkeypatch):
+    """切到生产环境 / ALLOW_DEV_ADMIN=false 之后，库里遗留的 admin/admin 必须在启动时被停用。"""
+    monkeypatch.setattr(settings, "ALLOW_DEV_ADMIN", False)
+    db_session.add(User(username="admin", hashed_password=security.hash_password("admin"), is_superuser=True, is_active=True))
+    db_session.commit()
+    assert init_mod._disable_legacy_demo_accounts(db_session) == 1
+    assert db_session.scalar(select(User).where(User.username == "admin")).is_active is False
+
+
+def test_admin_admin123_and_old_admin_admin_survive_when_dev_admin_allowed(db_session, monkeypatch):
+    """默认口令是 admin123；开发管理员放行时，admin/admin123 和旧版 admin/admin 的老库账号升级后都不能被停用。"""
+    monkeypatch.setattr(settings, "ALLOW_DEV_ADMIN", True)
+    db_session.add(User(username="admin", hashed_password=security.hash_password("admin123"), is_superuser=True, is_active=True))
+    db_session.commit()
+    assert init_mod._disable_legacy_demo_accounts(db_session) == 0
+    u = db_session.scalar(select(User).where(User.username == "admin"))
+    u.hashed_password = security.hash_password("admin")
+    db_session.commit()
+    assert init_mod._disable_legacy_demo_accounts(db_session) == 0
+    assert u.is_active is True
+
+
+def test_admin123_account_is_disabled_when_dev_admin_not_allowed(db_session, monkeypatch):
+    monkeypatch.setattr(settings, "ALLOW_DEV_ADMIN", False)
+    db_session.add(User(username="admin", hashed_password=security.hash_password("admin123"), is_superuser=True, is_active=True))
+    db_session.commit()
+    assert init_mod._disable_legacy_demo_accounts(db_session) == 1
+
+
+def test_dev_default_credential_helper(monkeypatch):
+    monkeypatch.setattr(settings, "ALLOW_DEV_ADMIN", True)
+    assert security.is_dev_default_credential("admin", "admin123") is True
+    assert security.is_dev_default_credential("admin", "admin") is False
+    assert security.is_dev_default_credential("someone", "admin123") is False
+    monkeypatch.setattr(settings, "ALLOW_DEV_ADMIN", False)
+    assert security.is_dev_default_credential("admin", "admin123") is False
+
+
+def test_api_still_rejects_weak_passwords_even_for_the_default_pair(client):
+    """admin/admin 只对"首次创建 / CLI"放行，HTTP 接口的密码策略不变。"""
+    r = client.post("/api/v1/system/users", json={"username": "admin2", "password": "admin"})
+    assert r.status_code == 422
 
 
 def test_dev_admin_never_used_when_disallowed(db_session, monkeypatch):
@@ -349,8 +395,10 @@ def test_frontend_has_no_demo_credentials():
 
     if FRONTEND_PATH:
         html = FRONTEND_PATH.read_text(encoding="utf-8")
-        for needle in ("admin123", "op123", "maint123", "sys123"):
+        for needle in ("op123", "maint123", "sys123"):
             assert needle not in html
+        # 默认账号 admin / admin123 按产品要求写在登录页提示里；除此之外前端不应出现这个口令
+        assert html.count("admin123") == html.count("admin / admin123")
 
 
 def test_user_creation_enforces_password_policy(client):

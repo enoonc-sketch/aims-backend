@@ -42,7 +42,7 @@ def test_migrations_form_one_linear_chain():
         cur = children[cur][0]
         order.append(cur)
     assert len(order) == len(edges), "unreachable revision"
-    assert order[-3:] == ["007_industrial_core", "008_chain_feedback_loop", "009_security_hardening"]
+    assert order[-3:] == ["008_chain_feedback_loop", "009_security_hardening", "010_must_change_password"]
 
 
 def test_acquisition_event_feeds_the_alarm_diagnosis_workorder_chain(client, db_session):

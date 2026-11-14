@@ -134,18 +134,22 @@ def _find_edge() -> Path | None:
     return None
 
 
-def open_app_window(url: str) -> str:
-    """打开主界面，优先用 Edge/Chrome 的 --app 模式（独立窗口、无地址栏、像桌面软件）。
+def open_app_window_proc(url: str) -> tuple[str, subprocess.Popen | None]:
+    """打开主界面，返回 (方式, 浏览器进程)。
 
-    找不到 Chromium 内核浏览器时退回系统默认浏览器 —— 功能完全一样，只是带地址栏。
-    返回实际使用的方式，便于日志和诊断。
+    找不到 Chromium 内核浏览器时退回系统默认浏览器（此时没有可跟踪的进程，
+    返回 None）。调用方想在窗口关闭时得到通知（例如托盘“最小化到托盘”），
+    可以等这个进程退出；注意：用同一个 --user-data-dir 再开窗口时，新进程
+    会立刻把请求交给已在跑的浏览器进程后退出，所以“进程退出”只代表
+    “这个 profile 的最后一个窗口关了”，且启动后几秒内就退出的一律按
+    “交接”处理，不要当成用户关窗口。
     """
     exe = _find_edge() if IS_WINDOWS else None
     if exe is not None:
         profile = Path(os.environ.get("LOCALAPPDATA") or Path.home()) / "AIMS" / "ui-profile"
         try:
             profile.mkdir(parents=True, exist_ok=True)
-            subprocess.Popen(
+            proc = subprocess.Popen(
                 [str(exe), f"--app={url}", f"--user-data-dir={profile}",
                  "--no-first-run", "--no-default-browser-check", "--window-size=1440,900"],
                 close_fds=True,
@@ -154,17 +158,27 @@ def open_app_window(url: str) -> str:
                 creationflags=getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
                 | getattr(subprocess, "CREATE_NO_WINDOW", 0),
             )
-            return f"app-window:{exe.name}"
+            return f"app-window:{exe.name}", proc
         except Exception as exc:  # noqa: BLE001
             logger.warning("app window failed (%s), falling back to default browser", exc)
     import webbrowser
 
     try:
         webbrowser.open(url)
-        return "default-browser"
+        return "default-browser", None
     except Exception as exc:  # noqa: BLE001
         logger.error("could not open UI: %s", exc)
-        return "failed"
+        return "failed", None
+
+
+def open_app_window(url: str) -> str:
+    """打开主界面，优先用 Edge/Chrome 的 --app 模式（独立窗口、无地址栏、像桌面软件）。
+
+    找不到 Chromium 内核浏览器时退回系统默认浏览器 —— 功能完全一样，只是带地址栏。
+    返回实际使用的方式，便于日志和诊断。
+    """
+    how, _proc = open_app_window_proc(url)
+    return how
 
 
 # --------------------------------------------------------------------------- #
@@ -208,38 +222,28 @@ def set_autostart(enabled: bool) -> bool:
 # 托盘
 # --------------------------------------------------------------------------- #
 def tray_available() -> bool:
-    try:
-        import pystray  # noqa: F401
-        from PIL import Image  # noqa: F401
-
-        return True
-    except Exception:  # noqa: BLE001
-        return False
+    """托盘只靠系统自带的 Win32 接口（ctypes），不需要 pystray / Pillow；非 Windows 没有托盘。"""
+    return IS_WINDOWS
 
 
 def build_tray_icon(icon_path: Path | None):
-    """构造 pystray 图标；没有 pystray/Pillow 时返回 None（启动器继续无托盘运行）。"""
+    """构造托盘图标对象（见 tray_win32.TrayIcon）；非 Windows 或创建失败返回 None（启动器无托盘继续运行）。
+
+    .ico 缺失 / 读不了时托盘会用系统默认应用图标，不会因为缺图标起不来。
+    """
     if not tray_available():
         return None
-    import pystray
-    from PIL import Image, ImageDraw
+    try:
+        from app.launcher.tray_win32 import TrayIcon
 
-    if icon_path and icon_path.is_file():
-        image = Image.open(icon_path)
-        image.load()
-    else:  # 兜底：画一个简单的圆角方块，避免因缺图标而无法启动
-        image = Image.new("RGBA", (64, 64), (0, 0, 0, 0))
-        draw = ImageDraw.Draw(image)
-        draw.rounded_rectangle((4, 4, 60, 60), radius=12, fill=(23, 92, 211, 255))
-        draw.rectangle((18, 30, 46, 36), fill=(255, 255, 255, 255))
-        draw.rectangle((30, 18, 36, 48), fill=(255, 255, 255, 255))
-    return pystray.Icon("aims", image, "AIMS 设备智能运维系统")
+        return TrayIcon("aims", "AIMS 设备智能运维系统", icon_path)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("tray icon unavailable: %s", exc)
+        return None
 
 
 def run_tray(icon, items: Iterable) -> None:  # pragma: no cover - GUI 循环
-    import pystray
-
-    icon.menu = pystray.Menu(*items)
+    icon.menu = list(items)
     icon.run()
 
 
@@ -303,13 +307,11 @@ def webview_available() -> bool:
 def run_tray_detached(icon, items: Iterable) -> bool:
     """在后台线程里跑托盘图标（供主线程跑 GUI 消息循环的窗口模式用）。
 
-    pystray 的 win32 后端支持 run_detached；失败返回 False，调用方回退到
+    起不来（窗口类注册失败、Shell_NotifyIconW 失败等）返回 False，调用方回退到
     "托盘在主线程" 的传统模式。
     """
     try:
-        import pystray
-
-        icon.menu = pystray.Menu(*items)
+        icon.menu = list(items)
         icon.run_detached()
         return True
     except Exception as exc:  # noqa: BLE001
@@ -318,11 +320,19 @@ def run_tray_detached(icon, items: Iterable) -> bool:
 
 
 def run_desktop_window(url: str, *, title: str = "AIMS", width: int = 1280,
-                       height: int = 800) -> None:
-    """以原生桌面窗口打开主界面，阻塞到窗口被用户关闭。
+                       height: int = 800, on_close_to_tray=None,
+                       on_window=None, is_quitting=None) -> None:
+    """以原生桌面窗口打开主界面，阻塞到窗口被真正销毁。
 
     与 run_standalone._open_ui_window 相同的注意点：不设 on_top=True
     （pywebview 6.2.1 + EdgeChromium 在激活压力下会死锁，见 r0x0r/pywebview#1823）。
+
+    on_close_to_tray: 传了它，点 × 不会关掉窗口，而是隐藏窗口并调这个回调
+    （托盘继续跑，应用不退出）；回调里通常发一次托盘通知。不传则点 ×
+    直接关窗口（老行为）。on_window: 窗口建好后调一次，传窗口对象，
+    调用方留着它以后 show()/hide()/load_url()。is_quitting: 退出程序时
+    销毁窗口也可能触发 closing 事件，传一个“正在退出”的判断，正在退出
+    就放行（不拦截、不隐藏），否则退出会被自己的拦截挡住。
     """
     import webview
 
@@ -330,6 +340,218 @@ def run_desktop_window(url: str, *, title: str = "AIMS", width: int = 1280,
         webview.settings["ALLOW_DOWNLOADS"] = True
     except Exception:  # noqa: BLE001
         pass
-    webview.create_window(title, url, width=width, height=height,
-                          resizable=True, text_select=True)
+    window = webview.create_window(title, url, width=width, height=height,
+                                   resizable=True, text_select=True)
+    if window is not None and on_close_to_tray is not None:
+        def _on_closing():
+            if is_quitting is not None and is_quitting():
+                return None  # 正在退出程序：放行，让窗口真正关掉
+            # pywebview：closing 处理返回 False 就取消关闭。窗口只是藏起来，
+            # 事件循环继续跑，托盘菜单 / 快捷键随时能再把它叫出来。
+            try:
+                window.hide()
+            except Exception:  # noqa: BLE001
+                pass
+            try:
+                on_close_to_tray()
+            except Exception:  # noqa: BLE001
+                logger.exception("close-to-tray callback failed")
+            return False
+
+        try:
+            window.events.closing += _on_closing
+        except Exception:  # noqa: BLE001
+            logger.warning("could not hook window closing event; close will quit")
+    if window is not None and on_window is not None:
+        try:
+            on_window(window)
+        except Exception:  # noqa: BLE001
+            pass
     webview.start()
+
+
+def show_desktop_window(window) -> bool:
+    """把藏起来的原生窗口再显示出来（托盘菜单 / 快捷键用）。"""
+    if window is None:
+        return False
+    try:
+        window.show()
+        return True
+    except Exception:  # noqa: BLE001
+        logger.warning("show desktop window failed")
+        return False
+
+
+def hide_desktop_window(window) -> bool:
+    """把原生窗口藏到托盘（快捷键切换用）。"""
+    if window is None:
+        return False
+    try:
+        window.hide()
+        return True
+    except Exception:  # noqa: BLE001
+        logger.warning("hide desktop window failed")
+        return False
+
+
+def destroy_desktop_window(window) -> bool:
+    """真正销毁原生窗口（退出程序时用；会让 webview.start() 返回）。"""
+    if window is None:
+        return False
+    try:
+        window.destroy()
+        return True
+    except Exception:  # noqa: BLE001
+        logger.warning("destroy desktop window failed")
+        return False
+
+
+def load_desktop_url(window, url: str) -> bool:
+    """让已有的原生窗口跳到指定地址（例如托盘“设置”直接打开设置页）。"""
+    if window is None:
+        return False
+    try:
+        window.load_url(url)
+        return True
+    except Exception:  # noqa: BLE001
+        logger.warning("load desktop url failed")
+        return False
+
+
+# --------------------------------------------------------------------------- #
+# 全局快捷键（Windows：RegisterHotKey；其它平台不支持，调用方直接跳过）
+# --------------------------------------------------------------------------- #
+# 修饰键（winuser.h MOD_*）与虚拟键码：只认“修饰键 + 一个键”的组合，
+# 单个字母/数字不接受（否则正常打字会被劫持）。
+_MOD_MAP = {"ctrl": 0x0002, "alt": 0x0001, "shift": 0x0004, "win": 0x0008}
+_FKEY_VK = {f"f{i}": 0x70 + (i - 1) for i in range(1, 25)}
+_WM_HOTKEY = 0x0312
+
+
+def parse_hotkey(text: str) -> tuple[int, int] | None:
+    """解析 "ctrl+alt+a" 这样的快捷键，返回 (修饰键位掩码, 虚拟键码)。
+
+    接受：ctrl/alt/shift/win（任意组合，至少一个）+ 一个键（a-z、0-9、f1-f24）。
+    其它写法一律返回 None（调用方提示用户重填）。
+    """
+    if not text:
+        return None
+    parts = [p.strip().lower() for p in text.split("+")]
+    if len(parts) < 2 or any(not p for p in parts):
+        return None
+    mods = 0
+    for p in parts[:-1]:
+        if p not in _MOD_MAP:
+            return None
+        mods |= _MOD_MAP[p]
+    if mods == 0:
+        return None
+    key = parts[-1]
+    if len(key) == 1 and key.isalnum() and key.isascii():
+        return mods, ord(key.upper())
+    if key in _FKEY_VK:
+        return mods, _FKEY_VK[key]
+    return None
+
+
+def format_hotkey(mods: int, vk: int) -> str:
+    """parse_hotkey 的逆操作：把 (修饰键, 虚拟键) 写回 "ctrl+alt+a" 形式。"""
+    names = []
+    for name, bit in (("ctrl", 0x0002), ("alt", 0x0001), ("shift", 0x0004), ("win", 0x0008)):
+        if mods & bit:
+            names.append(name)
+    if 0x41 <= vk <= 0x5A:
+        names.append(chr(vk).lower())
+    elif 0x30 <= vk <= 0x39:
+        names.append(chr(vk))
+    elif 0x70 <= vk <= 0x87:
+        names.append(f"f{vk - 0x70 + 1}")
+    else:
+        names.append(f"vk{vk}")
+    return "+".join(names)
+
+
+class HotkeyListener:
+    """在后台线程里等一个 Windows 全局快捷键，按下就调 callback。
+
+    用消息窗口（HWND_MESSAGE）收 WM_HOTKEY：不需要可见窗口，不抢焦点。
+    非 Windows 上 start() 直接返回 False，调用方按“不支持”处理。
+    """
+
+    def __init__(self, hotkey: tuple[int, int] | None, callback: Callable[[], None]) -> None:
+        self.hotkey = hotkey
+        self.callback = callback
+        self._thread = None
+        self._hwnd = None
+        self._running = False
+
+    def start(self) -> bool:
+        if not IS_WINDOWS or not self.hotkey:
+            return False
+        if self._thread is not None and self._thread.is_alive():
+            return True
+        import threading
+
+        self._running = True
+        self._thread = threading.Thread(target=self._loop, name="aims-hotkey",
+                                        daemon=True)
+        self._thread.start()
+        return True
+
+    def stop(self) -> None:
+        self._running = False
+        if self._hwnd:
+            try:
+                ctypes.windll.user32.PostMessageW(self._hwnd, 0x0012, 0, 0)  # WM_QUIT
+            except Exception:  # noqa: BLE001
+                pass
+        if self._thread is not None:
+            # 等线程退干净（它会先 UnregisterHotKey）：换新热键时立即重注册才不会撞上旧的。
+            self._thread.join(timeout=1.0)
+
+    def _loop(self) -> None:
+        try:
+            import ctypes.wintypes as wt
+
+            user32 = ctypes.windll.user32
+            kernel32 = ctypes.windll.kernel32
+            mods, vk = self.hotkey
+            # 消息窗口：只收消息，不显示。
+            wc = wt.WNDCLASSW()
+            wc.lpfnWndProc = wt.WNDPROC(lambda h, m, w, l: user32.DefWindowProcW(h, m, w, l))
+            wc.lpszClassName = "AIMS.HotkeyListener"
+            wc.hInstance = kernel32.GetModuleHandleW(None)
+            user32.RegisterClassW(ctypes.byref(wc))
+            hwnd = user32.CreateWindowExW(0, wc.lpszClassName, "AIMS Hotkey", 0,
+                                          0, 0, 0, 0, -3, None, wc.hInstance, None)  # HWND_MESSAGE = -3
+            if not hwnd:
+                logger.warning("hotkey listener: no message window")
+                return
+            self._hwnd = hwnd
+            if not user32.RegisterHotKey(hwnd, 1, mods, vk):
+                logger.warning("hotkey listener: RegisterHotKey failed (maybe taken)")
+                user32.DestroyWindow(hwnd)
+                return
+            msg = wt.MSG()
+            while self._running:
+                ret = user32.GetMessageW(ctypes.byref(msg), None, 0, 0)
+                if ret <= 0:
+                    break
+                if msg.message == _WM_HOTKEY:
+                    try:
+                        self.callback()
+                    except Exception:  # noqa: BLE001
+                        logger.exception("hotkey callback failed")
+                user32.TranslateMessage(ctypes.byref(msg))
+                user32.DispatchMessageW(ctypes.byref(msg))
+        except Exception:  # noqa: BLE001
+            logger.exception("hotkey listener failed")
+        finally:
+            try:
+                if self._hwnd:
+                    user32 = ctypes.windll.user32
+                    user32.UnregisterHotKey(self._hwnd, 1)
+                    user32.DestroyWindow(self._hwnd)
+            except Exception:  # noqa: BLE001
+                pass
+            self._hwnd = None

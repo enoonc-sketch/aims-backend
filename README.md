@@ -1,6 +1,6 @@
 # AIMS Backend — Industrial Analyzer Smart O&M Platform
 
-> **Windows 离线安装版（1.0.4，基准 0.5.9）**
+> **Windows 离线安装版（1.0.10，基准 0.5.9）**
 >
 > 本仓库现在同时是「Windows 桌面独立软件」的源码：单文件安装包、零外部依赖、
 > 内置 PostgreSQL 16 + pgvector + 本地 AI 引擎、桌面托盘启动器、一键备份/恢复、
@@ -21,13 +21,13 @@
 >
 > ```powershell
 > cd build; .\build_x64.ps1          # 依赖 → 内置PG → 打包 → 冒烟 → 出安装包
-> .\package_release.ps1 -Installer ..\installer_output\AIMS-1.0.4-x64-Setup.exe
+> .\package_release.ps1 -Installer ..\installer_output\AIMS-1.0.10-x64-Setup.exe
 > ```
 >
 > 快速上手（目标机，无需任何开发环境）：
 >
 > ```
-> 双击 AIMS-1.0.4-x64-Setup.exe → 桌面 AIMS 图标 → 托盘菜单
+> 双击 AIMS-1.0.10-x64-Setup.exe → 桌面 AIMS 图标 → 托盘菜单
 > 运维：C:\Program Files\AIMS\tools\*.ps1（备份/恢复/诊断/卸载）
 > 验收：tools\Windows-Acceptance.ps1 -Setup <安装包>
 > ```
@@ -198,7 +198,7 @@ pytest -v
 |---|---|
 | `DATABASE_URL` | SQLAlchemy 连接串，Docker Compose 中自动指向 `db` 服务 |
 | `SECRET_KEY` | JWT 签名密钥。**生产必填**（≥32 位随机值，`python -m app.cli gen-secret`）；开发/独立 EXE 可留空，自动生成并保存在数据库同目录的 `.dev_secret_key` |
-| `ALLOW_DEV_ADMIN` / `DEV_ADMIN_USERNAME` / `DEV_ADMIN_PASSWORD` | 开发环境空库时自动创建的开发管理员（默认 `admin` / `admin123`）。生产环境禁止，强制开启会拒绝启动 |
+| `ALLOW_DEV_ADMIN` / `DEV_ADMIN_USERNAME` / `DEV_ADMIN_PASSWORD` | 开发/桌面环境空库时自动创建的默认管理员（默认 `admin` / `admin123`；`ALLOW_DEV_ADMIN=false` 可关闭）。已有数据库不会被改动账号（旧版 admin/admin 的老库照常能登录），要改成 admin/admin123 可用 `python -m app.cli reset-password admin`。生产环境一律禁止，强制开启会拒绝启动 |
 | `BOOTSTRAP_ADMIN_USERNAME` / `_PASSWORD` | 空库首次启动时注入的管理员（须满足密码策略），优先于开发管理员 |
 | `AI_PROVIDER` / `AI_API_KEY` / `AI_API_BASE` / `AI_CHAT_MODEL` | AI Center 对接的 LLM（OpenAI 兼容接口），留空则以内置规则引擎离线运行 |
 | `AI_EMBEDDING_DIM` | 需与 `knowledge_chunks.embedding` 的 `vector(N)` 维度一致 |

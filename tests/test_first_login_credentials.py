@@ -1,8 +1,8 @@
-"""首次登录凭据落盘（随机初始密码 → 人可读文件）。
+"""首次登录凭据落盘（人可读文件）。
 
-背景：首个管理员由 provision 用 secrets.token 随机口令创建（secrets.json 是
-JSON、给人读的体验很差）。用户拿 admin/admin 反复试错只会得到「用户名或
-密码不正确」。凭据必须同步写成可读文件，并提示首次登录后改密。
+安装版的默认管理员是 admin / admin123（与桌面独立版空库启动一致）；实施人员用
+--admin-password 自定义过口令时，文件里写的是自定义值。无论哪种，都要同步写成
+可读文件，并提示首次登录后到「系统设置 → 修改密码」里改密。
 """
 
 from __future__ import annotations
@@ -23,7 +23,7 @@ def layout(tmp_path: Path, monkeypatch) -> Layout:
     return lay
 
 
-def test_credentials_file_written_with_random_password(layout: Layout):
+def test_credentials_file_written_with_custom_password(layout: Layout):
     path = conf.write_first_login_credentials(
         layout, username="admin", password="Xy3kPq9mRt2wLz5A", api_port=8000)
     assert path == layout.config_dir / "first-login.txt"

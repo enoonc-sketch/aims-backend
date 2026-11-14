@@ -3,29 +3,45 @@ password change, current-user profile.
 
 Security behaviour
 ------------------
-* Login failures are counted per (lower-cased) username and per client IP inside a
-  sliding window. Once a limit is hit the API answers 429 + Retry-After *without
-  evaluating the password*, so a correct guess during lockout does not help.
+* Login failures are counted per (client IP, lower-cased username) PAIR inside a
+  sliding window, plus a much higher per-IP ceiling against username spraying.
+  Once a limit is hit the API answers 429 + Retry-After *without evaluating the
+  password*, so a correct guess during lockout does not help. Because the pair is
+  the key, someone typing wrong passwords for `admin` from their own address locks
+  only themselves out of `admin`; the real administrator on another address (and
+  other usernames on the same address) are unaffected.
   Unknown usernames are counted exactly like known ones (no enumeration) and cost
   the same CPU time (dummy bcrypt check).
 * Access tokens are short lived JWTs. Long sessions use opaque refresh tokens that
   are single-use: each refresh revokes the presented token and issues a new one in
   the same family. Re-presenting a revoked token revokes the whole family (theft
   detection). Only keyed digests of refresh tokens are stored.
+* Login, refresh and /auth/me report `must_change_password` when the account still
+  uses the built-in default administrator password (see user_must_change_password
+  in app.api.deps: a flag set at bootstrap, or the stored hash still being the
+  default password): the frontend then sends the user to change it before any
+  other feature can be used, and the server itself refuses other API calls
+  until then. The password policy never accepts that password as a new one, so
+  the flag clears itself the moment the password is changed.
 * Every security-relevant event is written to `audit_logs`: login success/failure/
   blocked, refresh (+ invalid/expired/reuse), logout, password change.
 """
+import hmac
+import os
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response, status
+from fastapi.security import HTTPAuthorizationCredentials
 from sqlalchemy import delete, select, update
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_current_user, get_current_user_optional, get_db
+from app.api.deps import get_current_user, get_current_user_optional, get_db, security_scheme, user_must_change_password
+from app.services import access
 from app.core.config import settings
 from app.core.security import (
+    decode_access_token,
     burn_password_check,
     create_access_token,
     generate_refresh_token,
@@ -42,6 +58,7 @@ from app.schemas.auth import (
     RefreshRequest,
     TokenResponse,
     UserOut,
+    UserSelfUpdate,
 )
 from app.services.audit import record_audit
 from app.services.auth_sessions import revoke_all_for_user, revoke_family
@@ -97,25 +114,34 @@ def _username_key(username: str) -> str:
     return username.strip().lower()[:100]
 
 
+def _ip_clause(ip: Optional[str]):
+    return LoginFailure.ip_address.is_(None) if ip is None else LoginFailure.ip_address == ip
+
+
 def _lock_status(db: Session, username_key: str, ip: Optional[str], now: datetime) -> Optional[int]:
-    """Return seconds until the next attempt is allowed, or None if not locked."""
+    """Return seconds until the next attempt is allowed, or None if not locked.
+
+    Two independent counters:
+      * (ip, username) pair  -> LOGIN_MAX_FAILURES   (locks only that pair)
+      * ip alone             -> LOGIN_MAX_FAILURES_PER_IP (username-spraying ceiling)
+    A failure from another address never counts against this address's pair."""
     window = timedelta(minutes=settings.LOGIN_LOCKOUT_MINUTES)
     since = now - window
     retry_candidates: list[datetime] = []
 
-    def _check(column, value, limit: int) -> None:
+    def _check(clauses: list, limit: int) -> None:
         stamps = db.scalars(
             select(LoginFailure.created_at)
-            .where(column == value, LoginFailure.created_at >= since)
+            .where(*clauses, LoginFailure.created_at >= since)
             .order_by(LoginFailure.created_at.asc())
         ).all()
         if len(stamps) >= limit:
             # the lock lifts when enough old failures have aged out of the window
             retry_candidates.append(_aware(stamps[len(stamps) - limit]) + window)
 
-    _check(LoginFailure.username, username_key, settings.LOGIN_MAX_FAILURES)
+    _check([LoginFailure.username == username_key, _ip_clause(ip)], settings.LOGIN_MAX_FAILURES)
     if ip:
-        _check(LoginFailure.ip_address, ip, settings.LOGIN_MAX_FAILURES_PER_IP)
+        _check([LoginFailure.ip_address == ip], settings.LOGIN_MAX_FAILURES_PER_IP)
     if not retry_candidates:
         return None
     return max(1, int((max(retry_candidates) - now).total_seconds()) + 1)
@@ -138,7 +164,8 @@ def _blocked(retry_after: int) -> HTTPException:
     )
 
 
-def _issue_tokens(db: Session, user: User, family_id: str, request: Request, now: datetime) -> TokenResponse:
+def _issue_tokens(db: Session, user: User, family_id: str, request: Request, now: datetime,
+                  must_change_password: bool = False) -> TokenResponse:
     refresh_plain = generate_refresh_token()
     db.add(
         RefreshToken(
@@ -156,6 +183,7 @@ def _issue_tokens(db: Session, user: User, family_id: str, request: Request, now
         expires_in=settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60,
         refresh_token=refresh_plain,
         refresh_expires_in=settings.REFRESH_TOKEN_EXPIRE_DAYS * 86400,
+        must_change_password=must_change_password,
     )
 
 
@@ -194,9 +222,11 @@ def login(payload: LoginRequest, request: Request, db: Session = Depends(get_db)
         db.commit()
         raise HTTPException(status_code=403, detail="User is disabled")
 
-    db.execute(delete(LoginFailure).where(LoginFailure.username == key))
+    # only this (ip, username) pair is cleared; other addresses' failures stay on record
+    db.execute(delete(LoginFailure).where(LoginFailure.username == key, _ip_clause(ip)))
     user.last_login_at = now
-    tokens = _issue_tokens(db, user, family_id=uuid4().hex, request=request, now=now)
+    tokens = _issue_tokens(db, user, family_id=uuid4().hex, request=request, now=now,
+                           must_change_password=user_must_change_password(user))
     record_audit(db, user_id=user.id, action="AUTH_LOGIN_SUCCESS", entity="auth",
                  detail={"username": user.username}, ip_address=ip)
     db.commit()
@@ -268,7 +298,8 @@ def refresh(payload: RefreshRequest, request: Request, db: Session = Depends(get
         db.commit()
         raise invalid
 
-    tokens = _issue_tokens(db, user, family_id=row.family_id, request=request, now=now)
+    tokens = _issue_tokens(db, user, family_id=row.family_id, request=request, now=now,
+                           must_change_password=user_must_change_password(user))
     record_audit(db, user_id=user.id, action="AUTH_REFRESH", entity="auth", ip_address=ip)
     db.commit()
     return tokens
@@ -301,6 +332,7 @@ def logout(
     else:
         raise HTTPException(status_code=401, detail="Not authenticated", headers={"WWW-Authenticate": "Bearer"})
 
+    access.report_logout()
     record_audit(db, user_id=user_id, action="AUTH_LOGOUT", entity="auth",
                  detail={"sessions_revoked": revoked}, ip_address=ip)
     db.commit()
@@ -339,13 +371,69 @@ def change_password(
         raise HTTPException(status_code=422, detail="New password must differ from the current one")
 
     user.hashed_password = hash_password(payload.new_password)
+    user.must_change_password = False
     revoke_all_for_user(db, user.id, now)
-    tokens = _issue_tokens(db, user, family_id=uuid4().hex, request=request, now=now)
+    tokens = _issue_tokens(db, user, family_id=uuid4().hex, request=request, now=now,
+                           must_change_password=user_must_change_password(user))
     record_audit(db, user_id=user.id, action="AUTH_PASSWORD_CHANGE", entity="users", entity_id=user.id, ip_address=ip)
     db.commit()
     return tokens
 
 
 @router.get("/me", response_model=UserOut)
-def me(user: User = Depends(get_current_user)):
-    return user
+def me(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    out = UserOut.model_validate(user)
+    out.must_change_password = user_must_change_password(user)
+    out.roles = access.role_codes_for(db, [user.id]).get(user.id, [])
+    out.pages = access.allowed_pages(db, user)
+    out.permission = access.permission_label(db, user)
+    return out
+
+
+@router.patch("/me", response_model=UserOut)
+def update_me(
+    payload: UserSelfUpdate,
+    request: Request,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """本人改自己的资料：只允许姓名与邮箱。超管标志、启用状态、密码都不在这里改
+    （密码走 /auth/change-password，状态与角色走系统设置里的账号管理）。"""
+    data = payload.model_dump(exclude_unset=True)
+    for k, v in data.items():
+        setattr(user, k, v)
+    record_audit(db, user_id=user.id, action="PROFILE_UPDATE", entity="users", entity_id=user.id,
+                 detail={"fields": sorted(data)},
+                 ip_address=request.client.host if request.client else None)
+    db.commit()
+    db.refresh(user)
+    out = UserOut.model_validate(user)
+    out.must_change_password = user_must_change_password(user)
+    out.roles = access.role_codes_for(db, [user.id]).get(user.id, [])
+    out.pages = access.allowed_pages(db, user)
+    out.permission = access.permission_label(db, user)
+    return out
+
+
+@router.post("/ui-state", status_code=status.HTTP_204_NO_CONTENT)
+def report_ui_state(
+    creds: Optional[HTTPAuthorizationCredentials] = Depends(security_scheme),
+    user: Optional[User] = Depends(get_current_user_optional),
+    db: Session = Depends(get_db),
+):
+    """界面上报“我现在登录着 / 已退出”，给托盘菜单显示登录状态。身份只取自令牌本身，上报不能冒名。"""
+    payload = decode_access_token(creds.credentials) if (creds and creds.credentials) else None
+    if user is not None and payload is not None:
+        access.report_login(user, access.permission_label(db, user), float(payload["exp"]))
+    else:
+        access.report_logout()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.get("/ui-state")
+def read_ui_state(x_aims_launcher: Optional[str] = Header(default=None)):
+    """启动器（托盘）读取界面登录状态。需要启动器启动后端时注入的口令；没有口令（非托盘运行）时不开放。"""
+    expected = os.environ.get("AIMS_LAUNCHER_TOKEN", "")
+    if not expected or not x_aims_launcher or not hmac.compare_digest(expected, x_aims_launcher):
+        raise HTTPException(status_code=404, detail="Not found")
+    return access.snapshot()

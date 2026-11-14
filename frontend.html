@@ -15,6 +15,7 @@ body{font-family:'Microsoft YaHei UI','Segoe UI',sans-serif;height:100vh;overflo
 .nav-btn{display:block;width:100%;text-align:left;padding:11px 20px;background:none;border:none;color:#8899aa;font-size:13px;cursor:pointer;transition:all .2s;border-left:3px solid transparent}
 .nav-btn:hover{background:#0d3a5e;color:#fff}
 .nav-btn.active{background:#1890ff;color:#fff;border-left-color:#40a9ff;font-weight:bold}
+.nav-btn.locked::after{content:"🔒";font-size:11px;margin-left:6px;opacity:.7}
 .status{padding:15px;background:#001529;color:#52c41a;font-size:11px;text-align:center;border-top:1px solid #1a3a5c}
 .main{flex:1;display:flex;flex-direction:column;overflow:hidden}
 .header{background:#fff;padding:12px 24px;border-bottom:1px solid #e8e8e8;display:flex;justify-content:space-between;align-items:center}
@@ -191,6 +192,7 @@ tr:hover{background:#f5f5f5}
 <button class="nav-btn" onclick="showPage('sys',this)" data-i18n="pageTitle_sys">System</button>
 </div>
 <div class="status"><span data-i18n="statusPrefix">System Status: </span><span id="sysStatus" data-i18n="statusOnline">Online</span></div>
+<div class="status" id="loginStatus" onclick="aimsLoginStatusClick()" style="cursor:pointer;color:#ff4d4f"><span id="loginStatusText" data-i18n="loginStatusOut">Not signed in</span></div>
 </div>
 <div class="main">
 <div class="header">
@@ -201,6 +203,12 @@ tr:hover{background:#f5f5f5}
 </div>
 </div>
 <div class="content">
+<div id="aimsPageLock" style="display:none;text-align:center;padding:80px 20px">
+<div style="font-size:56px;line-height:1">🔒</div>
+<h3 id="aimsPageLockTitle" style="margin:16px 0 8px;font-size:18px;color:#333"></h3>
+<p id="aimsPageLockDesc" style="margin:0 0 20px;font-size:14px;color:#666"></p>
+<button class="btn btn-primary" style="padding:8px 28px" onclick="aimsGoToLogin()" data-i18n="signIn">Sign in</button>
+</div>
 <div class="page active" id="page-dash">
 <div id="demoBanner" class="alert-item alert-warning" style="display:none;margin-bottom:12px">⚠️ 当前展示的是演示数据（未连接后端）。配置 API 地址并登录后会自动切换为真实数据。</div>
 <div class="card-grid">
@@ -344,8 +352,6 @@ tr:hover{background:#f5f5f5}
 <div class="da-section">
 <div id="daDrop" class="da-drop">
 <strong>Click or drag Excel file here</strong>
-<span style="display:block;font-size:12px;color:#999;margin-top:4px">Supports .xlsx / .xls / .csv</span>
-<div style="font-size:11px;color:#bbb;margin-top:8px">Browser security requires clicking to select files.</div>
 </div>
 <input id="daFileInput" type="file" accept=".xlsx,.xls,.csv" style="display:none" />
 </div>
@@ -360,12 +366,10 @@ tr:hover{background:#f5f5f5}
 <div class="da-section">
 <label class="da-label">Worksheet</label>
 <select id="daSheetSelect" class="da-select"><option>Loading...</option></select>
-<div id="daSheetHint" class="da-hint">0 rows, 0 cols</div>
 </div>
 <div class="da-section">
 <label class="da-label">X Axis Field</label>
 <select id="daXSelect" class="da-select"></select>
-<div class="da-hint">Usually select "Time", or any numeric/text column.</div>
 </div>
 <div class="da-section">
 <label class="da-label">Curve Fields (Multi-select)</label>
@@ -390,10 +394,8 @@ tr:hover{background:#f5f5f5}
 </div>
 <div class="da-section">
 <label class="da-label">Component Validation</label>
-<div class="da-hint" style="margin-bottom:6px">Sum of 19 components should be 99%-101%. Out of range marked as <b style="color:#dc2626">Abnormal</b>, otherwise <b style="color:#059669">Normal</b>.</div>
 <div class="da-check"><input type="checkbox" id="daEnableSumCheck" checked><span>Enable component sum check</span></div>
 <div class="da-check"><input type="checkbox" id="daShowMajorOnly" checked><span>Show major components only</span></div>
-<div class="da-hint">Major: Nitrogen, CO, CO2, Methane, Ethylene, Propylene, All Butenes, All Pentenes, 1,3-Butadiene</div>
 </div>
 <div class="da-section" style="display:flex;gap:8px;flex-wrap:wrap">
 <button class="da-btn grn" id="daRenderBtn">Generate Curves</button>
@@ -404,10 +406,10 @@ tr:hover{background:#f5f5f5}
 </aside>
 <section class="da-main">
 <div class="da-metrics">
-<div class="da-metric"><div class="k">File</div><div class="v" id="daMFile">Not Imported</div><div class="s" id="daMFileSub">Please select Excel</div></div>
-<div class="da-metric"><div class="k">Original Rows</div><div class="v" id="daMRows">0</div><div class="s">Excluding header</div></div>
-<div class="da-metric"><div class="k">Fields</div><div class="v" id="daMCols">0</div><div class="s" id="daMNumCols">Numeric 0</div></div>
-<div class="da-metric"><div class="k">Processed</div><div class="v" id="daMFiltered">0</div><div class="s" id="daMRange">Waiting</div></div>
+<div class="da-metric"><div class="k">File</div><div class="v" id="daMFile">Not Imported</div></div>
+<div class="da-metric"><div class="k">Original Rows</div><div class="v" id="daMRows">0</div></div>
+<div class="da-metric"><div class="k">Fields</div><div class="v" id="daMCols">0</div></div>
+<div class="da-metric"><div class="k">Processed</div><div class="v" id="daMFiltered">0</div></div>
 </div>
 <div class="da-tabs">
 <button class="da-tab active" data-da-tab="daChartPane">Curve</button>
@@ -416,8 +418,8 @@ tr:hover{background:#f5f5f5}
 <button class="da-tab" data-da-tab="daSchemaPane">Schema</button>
 <button class="da-tab" data-da-tab="daAIPane" data-ai-i18n="daAiTab">AI Reading</button>
 </div>
-<div id="daStatus" class="da-status">Please import Excel file.</div>
-<div class="da-pane active" id="daChartPane"><div id="daChart" class="da-chart"><div class="da-empty">Import file and select curves to display here.</div></div></div>
+<div id="daStatus" class="da-status"></div>
+<div class="da-pane active" id="daChartPane"><div id="daChart" class="da-chart"><div class="da-empty"></div></div></div>
 <div class="da-pane" id="daPreviewPane"><div class="da-preview-table" id="daPreviewTable"></div></div>
 <div class="da-pane" id="daStatsPane"><div id="daStats"></div></div>
 <div class="da-pane" id="daSchemaPane"><div id="daSchema" class="da-statsgrid"></div></div>
@@ -435,12 +437,13 @@ tr:hover{background:#f5f5f5}
 </div>
 <div class="page" id="page-ai">
 <div class="tabs">
-<button class="tab-btn active" onclick="switchAiTab('diag',this)">Diagnosis</button>
-<button class="tab-btn" onclick="switchAiTab('pred',this)">Prediction</button>
-<button class="tab-btn" onclick="switchAiTab('health',this)">Health</button>
+<button class="tab-btn active" onclick="switchAiTab('diag',this)" data-ai-i18n="tabDiag">Diagnosis</button>
+<button class="tab-btn" onclick="switchAiTab('pred',this)" data-ai-i18n="tabPred">Prediction</button>
+<button class="tab-btn" onclick="switchAiTab('health',this)" data-ai-i18n="tabHealth">Health</button>
 <button class="tab-btn" onclick="switchAiTab('sel',this)" data-ai-i18n="tabSel">Selection</button>
-<button class="tab-btn" onclick="switchAiTab('chat',this)">LLM Chat</button>
-<button class="tab-btn" onclick="switchAiTab('models',this)">Models</button>
+<button class="tab-btn" onclick="switchAiTab('chat',this)" data-ai-i18n="tabApply">Model Status</button>
+<button class="tab-btn" onclick="switchAiTab('models',this)" data-ai-i18n="tabModels">Model Download</button>
+<button class="tab-btn" onclick="switchAiTab('engine',this)" data-ai-i18n="tabEngine">Model Engine</button>
 </div>
 <div class="ai-picker" id="aiPickerBar">
 <div class="ai-row">
@@ -493,11 +496,19 @@ tr:hover{background:#f5f5f5}
 </div>
 
 <div class="tc" id="ai-chat">
+<div id="aiModelStatusBox" style="border:1px solid #d9d9d9;border-radius:8px;padding:12px 14px;margin-bottom:14px;background:#fafafa">
+<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">
+<strong style="font-size:14px;color:#333" data-ai-i18n="msTitle">Model status</strong>
+<button class="btn btn-gray" style="padding:2px 10px" onclick="loadChatModelOptions()" data-ai-i18n="msRefresh">Refresh</button>
+</div>
+<div id="aiModelStatusRows" style="margin-top:8px;font-size:13px;color:#444;line-height:1.9"></div>
+</div>
 <div style="display:flex;gap:12px;align-items:center;margin-bottom:12px">
 <label style="font-size:13px;color:#666;white-space:nowrap">Model:</label>
 <select id="chatModelSelect" class="da-select" style="flex:1" onchange="setChatModel(this.value)">
 <option value="">Loading models...</option>
 </select>
+<a href="#" class="ai-link" style="white-space:nowrap;font-size:13px" onclick="aiGoModelsTab();return false" data-ai-i18n="goModels">Download models / install engine ↗</a>
 </div>
 <div id="chatModelHint" style="font-size:12px;color:#999;margin-bottom:12px"></div>
 <div class="ai-row"><label class="ai-muted"><input type="checkbox" id="chatScope" checked> <span data-ai-i18n="chatScope">Chat about selected device:</span> <b id="chatScopeDev">(none)</b></label></div>
@@ -509,12 +520,12 @@ tr:hover{background:#f5f5f5}
 </div>
 </div>
 <div class="tc" id="ai-models">
-<div style="margin-bottom:16px">
+<div id="aiSecModels" style="margin-bottom:16px">
 <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
-<h3 style="margin:0;font-size:16px;color:#333">AI Model / Core Packs</h3>
+<h3 style="margin:0;font-size:16px;color:#333" data-ai-i18n="secModelsTitle">Model Download</h3>
 <button class="btn btn-primary" onclick="refreshAiModels()">Refresh Status</button>
 </div>
-<p style="font-size:13px;color:#666;margin:0 0 12px">Open-source offline cores used by Diagnosis / Prediction / Health / Chat. Download packs for local use or offline EXE bundling. Data Analysis chart libraries (Chart.js / xlsx) are also listed.</p>
+<p style="font-size:13px;color:#666;margin:0 0 12px" data-ai-i18n="secModelsDesc">Open-source offline cores used by Diagnosis / Prediction / Health / Model Status. Download packs for local use or offline EXE bundling. Data Analysis chart libraries (Chart.js / xlsx) are also listed.</p>
 </div>
 <div id="aiModelRecoBox" style="background:#f6faff;border:1px solid #bfe0ff;border-radius:8px;padding:14px;margin-bottom:16px;display:none">
 <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;flex-wrap:wrap;gap:8px">
@@ -527,12 +538,38 @@ tr:hover{background:#f5f5f5}
 </div>
 <div id="aiModelsList" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px"></div>
 <div id="aiModelsStatus" style="margin-top:16px;font-size:12px;color:#999"></div>
-<div style="margin:28px 0 12px;border-top:1px solid #eee;padding-top:20px">
-<h3 style="margin:0 0 4px;font-size:16px;color:#333">本地推理引擎安装 / Local Inference Engine Install</h3>
-<p style="font-size:13px;color:#666;margin:0 0 12px">运行上面下载的 GGUF 模型，需要先安装对应的推理引擎。根据你的硬件选一个安装，装完建议重启后端服务。仅在源码/开发模式运行时可用——如果是打包后的 EXE，需要修改 requirements-exe-ai.txt 并重新运行 build_exe.bat 打包。</p>
+<div id="aiModelsEngineSec" style="margin-top:24px;border-top:1px solid #eee;padding-top:16px">
+<h3 style="margin:0 0 4px;font-size:16px;color:#333" data-ai-i18n="secEngineTitle">Inference Engine</h3>
+<p style="font-size:13px;color:#666;margin:0 0 12px" data-ai-i18n="modelsEngineDesc">Local inference engine for the GGUF models above. Install one that matches your hardware, then restart the backend service.</p>
+<div id="aiNativeEngineSec" style="margin-bottom:16px">
+<h4 style="margin:0 0 4px;font-size:14px;color:#333" data-ai-i18n="natEngTitle">Standalone engine (works in the packaged EXE)</h4>
+<p style="font-size:13px;color:#666;margin:0 0 12px" data-ai-i18n="natEngDesc">Official prebuilt llama.cpp Windows binaries, downloaded from GitHub releases into the data directory. Works in the packaged EXE — no pip, no rebuild. CUDA needs its ~390 MB runtime companion too (about 710 MB total).</p>
+<div id="aiNativeEnginesList" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px"></div>
+<div id="aiNativeEnginesStatus" style="margin-top:8px;font-size:12px;color:#999"></div>
+<h4 style="margin:16px 0 4px;font-size:14px;color:#333" data-ai-i18n="pipEngTitle">Python package install (source / dev mode only)</h4>
+<p style="font-size:13px;color:#666;margin:0 0 12px" data-ai-i18n="pipEngDesc">Installs llama-cpp-python with pip. Refused inside the packaged EXE — use the standalone engine above instead.</p>
+</div>
+<div id="aiModelsEngineList" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px"></div>
+</div>
+</div>
+<div class="tc" id="ai-engine">
+<div id="aiEngineBanner" style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;border:1px solid #d9d9d9;background:#fafafa;border-radius:8px;padding:10px 14px;margin-bottom:16px">
+<strong style="font-size:14px;color:#333" data-ai-i18n="engBannerTitle">Inference engine:</strong>
+<span id="aiEngineBannerState" style="font-size:13px;color:#555"></span>
+<span style="margin-left:auto;display:flex;gap:14px;font-size:13px">
+<a href="#" class="ai-link" onclick="aiGoModelsTab();return false" data-ai-i18n="linkModels">Model Download</a>
+<a href="#" class="ai-link" onclick="aiGoEngineTab();return false" data-ai-i18n="linkEngine">Model Engine</a>
+</span>
+</div>
+<div id="aiSecEngine" style="margin:28px 0 12px;border-top:1px solid #eee;padding-top:20px">
+<h3 style="margin:0 0 4px;font-size:16px;color:#333" data-ai-i18n="secEngineTitle">Inference Engine</h3>
+<p style="font-size:13px;color:#666;margin:0 0 12px" data-ai-i18n="secEngineDesc">To run the GGUF models downloaded above you first need to install a matching inference engine. Pick one for your hardware and restart the backend service afterwards. Installing needs an administrator account and is only available when running from source / dev mode — for a packaged EXE, edit requirements-exe-ai.txt and rerun build_exe.bat.</p>
 </div>
 <div id="pyPackagesList" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px"></div>
 <div id="pyPackagesStatus" style="margin-top:12px;font-size:12px;color:#999"></div>
+<h4 style="margin:24px 0 4px;font-size:14px;color:#333" data-ai-i18n="depsTitle">Other analysis dependencies</h4>
+<p class="ai-muted" style="margin:0 0 12px" data-ai-i18n="depsDesc">Used by anomaly detection and trend forecasting.</p>
+<div id="pyDepsList" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px"></div>
 </div>
 </div>
 
@@ -823,6 +860,7 @@ tr:hover{background:#f5f5f5}
 <button class="tab-btn" onclick="switchSysTab('users',this)" data-i18n="sysTabUsers">Users</button>
 <button class="tab-btn" onclick="switchSysTab('audit',this)" data-i18n="sysTabAudit">Audit Log</button>
 <button class="tab-btn" onclick="switchSysTab('components',this)" data-i18n="sysTabComponents">Components</button>
+<button class="tab-btn" onclick="switchSysTab('password',this)" data-i18n="sysTabPassword">Change Password</button>
 </div>
 <div class="tc active" id="sys-login">
 <div class="login-form">
@@ -830,30 +868,62 @@ tr:hover{background:#f5f5f5}
 <div id="sessionBanner" class="login-result error" style="display:none;margin:0 0 12px"></div>
 <div id="sessionInfo" style="display:none;text-align:center">
 <p style="margin:0 0 12px"><span data-i18n="signedInAs">Signed in as </span><strong id="sessionUser"></strong></p>
+<button class="btn btn-gray" style="width:100%;margin-bottom:8px" onclick="aimsOpenChangePassword()" data-i18n="pwOpen">Change password</button>
 <button class="btn btn-gray" style="width:100%" onclick="doLogout()" data-i18n="signOut">Sign out</button>
 </div>
 <div id="loginFields">
-<div class="form-group"><label id="loginUserLabel">Username</label><input type="text" id="loginUser" placeholder="Enter username" autocomplete="username" autocapitalize="off" spellcheck="false" onkeydown="if(event.key==='Enter')doLogin()"></div>
+<div class="form-group"><label id="loginUserLabel">Username</label><input type="text" id="loginUser" value="admin" placeholder="Enter username" autocomplete="username" autocapitalize="off" spellcheck="false" onkeydown="if(event.key==='Enter')doLogin()"></div>
 <div class="form-group"><label id="loginPassLabel">Password</label>
 <div style="position:relative"><input type="password" id="loginPass" placeholder="Enter password" autocomplete="current-password" style="padding-right:64px" onkeydown="if(event.key==='Enter')doLogin();aimsCapsHint(event)" onkeyup="aimsCapsHint(event)">
 <button type="button" class="btn btn-gray" style="position:absolute;right:4px;top:50%;transform:translateY(-50%);padding:2px 8px;font-size:12px" onclick="aimsTogglePass(this)" id="passToggleBtn" data-i18n="passShow">Show</button></div>
 <div id="capsHint" style="display:none;font-size:12px;color:#c07a00;margin-top:4px" data-i18n="capsLockOn">Caps Lock is on</div></div>
 <button id="loginBtn" class="btn btn-primary" style="width:100%" onclick="doLogin()">Login</button>
+<div id="loginDefaultHint" style="margin-top:10px;font-size:12px;color:#999;text-align:center" data-i18n="loginDefaultHint">Default account / password: admin / admin123</div>
 </div>
 <div id="loginResult" class="login-result" style="display:none" role="alert" aria-live="polite"></div>
 </div>
 </div>
+<div class="tc" id="sys-password">
+<div class="login-form">
+<h2 data-i18n="pwTitle">Change Password</h2>
+<div id="pwForcedNote" role="alert" style="display:none;margin:0 0 12px;padding:10px 12px;background:#fffbe6;border:1px solid #ffe58f;border-radius:6px;color:#ad6800;font-size:13px" data-i18n="pwForced">First sign-in with the default account: you must change the password before using the rest of the system.</div>
+<p class="ai-muted" style="margin:0 0 12px" data-i18n="pwRules">At least 12 characters, mixing at least 3 of: lowercase, uppercase, digits, symbols. Must not be a common password or contain your username.</p>
+<div class="form-group"><label data-i18n="pwCurrent">Current password</label><input type="password" id="pwCurrent" autocomplete="current-password" onkeydown="if(event.key==='Enter')doChangePassword()"></div>
+<div class="form-group"><label data-i18n="pwNew">New password</label><input type="password" id="pwNew" autocomplete="new-password" onkeydown="if(event.key==='Enter')doChangePassword()"></div>
+<div class="form-group"><label data-i18n="pwConfirm">Confirm new password</label><input type="password" id="pwConfirm" autocomplete="new-password" onkeydown="if(event.key==='Enter')doChangePassword()"></div>
+<button id="pwBtn" class="btn btn-primary" style="width:100%" onclick="doChangePassword()" data-i18n="pwSubmit">Change password</button>
+<div id="pwResult" class="login-result" style="display:none" role="alert" aria-live="polite"></div>
+</div>
+</div>
 <div class="tc" id="sys-roles">
 <h3 style="margin-bottom:16px">Role Permissions</h3>
-<div class="table-wrap">
-<table><thead><tr><th>Permission</th><th>Admin</th><th>Operator</th><th>Maintainer</th><th>System</th></tr></thead>
-<tbody>
-<tr><td>View Dashboard</td><td>✓</td><td>✓</td><td>✓</td><td>✓</td></tr>
-<tr><td>Manage Devices</td><td>✓</td><td>-</td><td>✓</td><td>-</td></tr>
-<tr><td>AI Diagnosis</td><td>✓</td><td>✓</td><td>✓</td><td>-</td></tr>
-<tr><td>System Settings</td><td>✓</td><td>-</td><td>-</td><td>✓</td></tr>
-<tr><td>User Management</td><td>✓</td><td>-</td><td>-</td><td>-</td></tr>
-</tbody></table>
+<div id="roleMatrix"><div class="ai-muted">加载中…</div></div>
+<div id="roleAdmin" style="display:none;margin-top:24px;max-width:420px">
+<h3 style="margin-bottom:8px">新建角色</h3>
+<p class="ai-muted" style="margin:0 0 12px">新建的角色初始没有任何权限，建完后去「设置」标签页的权限设置里勾选。角色代号只允许小写字母、数字、下划线。</p>
+<div class="form-group"><label>角色代号</label><input type="text" id="roleCode" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="例如：auditor"></div>
+<div class="form-group"><label>角色名称</label><input type="text" id="roleName" autocomplete="off" placeholder="例如：审计员"></div>
+<div class="form-group"><label>说明（可选）</label><input type="text" id="roleDesc" autocomplete="off"></div>
+<button id="roleCreateBtn" class="btn btn-primary" onclick="doCreateRole()">新建角色</button>
+<div id="roleResult" class="login-result" style="display:none;margin-top:8px" role="alert" aria-live="polite"></div>
+</div>
+<div id="rpPanel" style="display:none;margin-top:24px;max-width:420px">
+<h3 style="margin-bottom:8px" data-i18n="rpTitle">Reset a user's password</h3>
+<p class="ai-muted" style="margin:0 0 12px" data-i18n="rpHint">Super administrators only. Sets a new password for another account and signs that user out everywhere. To change your own password use the Change Password tab.</p>
+<div class="form-group"><label data-i18n="rpUser">User</label><select id="rpUser" style="width:100%;padding:8px;border:1px solid #d9d9d9;border-radius:6px"></select></div>
+<div class="form-group"><label data-i18n="rpNew">New password</label><input type="password" id="rpNew" autocomplete="new-password"></div>
+<div class="form-group"><label data-i18n="rpConfirm">Confirm new password</label><input type="password" id="rpConfirm" autocomplete="new-password" onkeydown="if(event.key==='Enter')doResetUserPassword()"></div>
+<button id="rpBtn" class="btn btn-primary" onclick="doResetUserPassword()" data-i18n="rpSubmit">Reset password</button>
+<div id="rpResult" class="login-result" style="display:none" role="alert" aria-live="polite"></div>
+</div>
+<div id="sysRolePw" style="margin-top:20px;display:none">
+<h3 style="margin-bottom:8px" data-i18n="pwTitle">Change Password</h3>
+<p class="ai-muted" style="margin:0 0 12px" data-i18n="pwRules">At least 12 characters, mixing at least 3 of: lowercase, uppercase, digits, symbols. Must not be a common password or contain your username.</p>
+<div class="form-group"><label data-i18n="pwCurrent">Current password</label><input type="password" id="rolePwCurrent"></div>
+<div class="form-group"><label data-i18n="pwNew">New password</label><input type="password" id="rolePwNew"></div>
+<div class="form-group"><label data-i18n="pwConfirm">Confirm new password</label><input type="password" id="rolePwConfirm"></div>
+<button class="btn btn-primary" id="rolePwBtn" onclick="doRoleChangePassword()" data-i18n="pwSubmit">Change password</button>
+<div id="rolePwResult" class="login-result" style="display:none;margin-top:8px"></div>
 </div>
 </div>
 <div class="tc" id="sys-users">
@@ -875,11 +945,48 @@ tr:hover{background:#f5f5f5}
 <div id="sysCompBox"><div class="ai-muted">加载中…</div></div>
 </div>
 <div class="tc" id="sys-settings">
-<h3 style="margin-bottom:16px">System Settings</h3>
-<div class="form-group"><label>API Endpoint</label><input type="text" id="apiEndpoint" value=""></div>
-<div class="form-group"><label>Auto Refresh Interval (seconds)</label><input type="number" id="refreshInterval" value="60"></div>
-<button class="btn btn-primary" onclick="saveSettings()">Save Settings</button>
+<h3 style="margin-bottom:16px" data-i18n="sysSettingsTitle">System Settings</h3>
+<div class="form-group"><label data-i18n="apiEndpointLabel">API Endpoint</label><input type="text" id="apiEndpoint" value=""></div>
+<div class="form-group"><label data-i18n="refreshIntervalLabel">Auto Refresh Interval (seconds)</label><input type="number" id="refreshInterval" value="60"></div>
+<button class="btn btn-primary" onclick="saveSettings()" data-i18n="saveSettingsBtn">Save Settings</button>
 <div id="saveResult" style="margin-top:12px"></div>
+<hr style="margin:24px 0;border:0;border-top:1px solid #eee">
+<h3 style="margin-bottom:12px" data-i18n="acctTitle">Login account &amp; password</h3>
+<div id="acctMine" style="font-size:13px;color:#444;line-height:1.9;margin-bottom:10px"></div>
+<button class="btn btn-gray" style="margin-bottom:16px" onclick="aimsOpenChangePassword()" data-i18n="pwOpen">Change password</button>
+<div id="myProfile" style="display:none;max-width:420px;margin-bottom:16px">
+<h4 style="margin:8px 0">我的资料</h4>
+<div class="form-group"><label data-i18n="acctFull">姓名（可选）</label><input type="text" id="myFull" autocomplete="off"></div>
+<div class="form-group"><label>Email</label><input type="text" id="myEmail" autocomplete="off" autocapitalize="off" spellcheck="false"></div>
+<button class="btn btn-primary" onclick="doSaveMyProfile()">保存资料</button>
+<div id="myProfileResult" class="login-result" style="display:none;margin-top:8px" role="alert" aria-live="polite"></div>
+</div>
+<div id="acctNotAdmin" class="ai-muted" style="display:none" data-i18n="acctAdminOnly">Only a super administrator can add accounts and change permissions.</div>
+<div id="acctAdmin" style="display:none">
+<h4 style="margin:8px 0" data-i18n="acctNewTitle">Add a login account</h4>
+<div style="max-width:420px">
+<div class="form-group"><label data-i18n="acctUser">Username</label><input type="text" id="acctUser" autocomplete="off" autocapitalize="off" spellcheck="false"></div>
+<div class="form-group"><label data-i18n="acctPass">Password</label><input type="password" id="acctPass" autocomplete="new-password"></div>
+<div class="form-group"><label data-i18n="acctFull">Display name (optional)</label><input type="text" id="acctFull" autocomplete="off"></div>
+<div class="form-group"><label data-i18n="acctRole">Role</label><select id="acctRole" style="width:100%;padding:8px;border:1px solid #d9d9d9;border-radius:6px"></select></div>
+<label style="display:block;margin-bottom:10px;font-size:13px"><input type="checkbox" id="acctSuper"> <span data-i18n="acctSuper">Super administrator (all permissions)</span></label>
+<button id="acctCreateBtn" class="btn btn-primary" onclick="doCreateAccount()" data-i18n="acctCreate">Create account</button>
+<div id="acctResult" class="login-result" style="display:none;margin-top:8px" role="alert" aria-live="polite"></div>
+</div>
+<h4 style="margin:20px 0 8px" data-i18n="acctListTitle">Accounts</h4>
+<div class="table-wrap"><table>
+<thead><tr><th>ID</th><th data-i18n="acctUser">Username</th><th data-i18n="acctRole">Role</th><th>状态</th><th>操作</th></tr></thead>
+<tbody id="acctBody"><tr><td colspan="5" style="text-align:center;color:#999">Loading...</td></tr></tbody>
+</table></div>
+</div>
+<hr style="margin:24px 0;border:0;border-top:1px solid #eee">
+<h3 style="margin-bottom:12px" data-i18n="permTitle">Permission settings</h3>
+<div id="permAdmin" style="display:none">
+<div class="form-group" style="max-width:320px"><label data-i18n="acctRole">Role</label><select id="permRole" onchange="permRender()" style="width:100%;padding:8px;border:1px solid #d9d9d9;border-radius:6px"></select></div>
+<div id="permGrid"></div>
+<button id="permSaveBtn" class="btn btn-primary" style="margin-top:12px" onclick="permSave()" data-i18n="permSave">Save permissions</button>
+<div id="permResult" class="login-result" style="display:none;margin-top:8px" role="alert" aria-live="polite"></div>
+</div>
 </div>
 </div>
 </div>
@@ -923,10 +1030,26 @@ function aimsStoreTokens(data) {
   try {
     localStorage.setItem('aims_token', data.access_token);
     if (data.refresh_token) localStorage.setItem('aims_refresh', data.refresh_token);
+    // 登录 / 刷新 / 改密码都会返回 must_change_password：有这个字段就同步，
+    // 没有就不动（老后端兼容）。
+    if (data.must_change_password !== undefined) aimsSetMustChangePassword(!!data.must_change_password);
   } catch (e) {}
+  aimsReportUiState();
 }
 function aimsClearTokens() {
-  try { localStorage.removeItem('aims_token'); localStorage.removeItem('aims_refresh'); } catch (e) {}
+  try { localStorage.removeItem('aims_token'); localStorage.removeItem('aims_refresh'); aimsSetMustChangePassword(false); } catch (e) {}
+  aimsReportUiState();
+}
+// ---- 强制改密码：账号仍用默认管理员口令时，改掉之前只能用“修改密码”这一个功能。
+// 标志由后端在登录 / 刷新 / /auth/me 里给出，存在令牌旁边，刷新页面后也还在。
+function aimsMustChangePassword() {
+  try { return localStorage.getItem('aims_must_change_pw') === '1'; } catch (e) { return false; }
+}
+function aimsSetMustChangePassword(on) {
+  try {
+    if (on) localStorage.setItem('aims_must_change_pw', '1');
+    else localStorage.removeItem('aims_must_change_pw');
+  } catch (e) {}
 }
 var _aimsRefreshing = null;   // one refresh at a time (refresh tokens are single-use)
 function aimsRefresh(staleAccess) {
@@ -950,7 +1073,7 @@ function aimsRefresh(staleAccess) {
         var ex = new Error('session expired'); ex.httpStatus = r.status; throw ex;
       }
       return r.json();
-    }).then(function(d) { aimsStoreTokens(d); return d; })
+    }).then(function(d) { aimsStoreTokens(d); if (aimsMustChangePassword()) aimsGoToChangePassword(); return d; })
       .then(function(d) { _aimsRefreshing = null; return d; },
             function(e) { _aimsRefreshing = null; throw e; });
   }
@@ -994,6 +1117,7 @@ function aimsSessionExpired(msg, silent) {
   _aimsUser = null;
   if (_aimsRefreshTimer) { clearTimeout(_aimsRefreshTimer); _aimsRefreshTimer = null; }
   aimsRenderSession();
+  aimsKickIfLocked();
   var res = document.getElementById('loginResult');
   if (res) {
     res.style.display = '';
@@ -1035,11 +1159,26 @@ function aimsGoToLogin() {
   if (tab && typeof switchSysTab === 'function') switchSysTab('login', tab);
   var u = document.getElementById('loginUser'); if (u) u.focus();
 }
+// 侧栏底部的登录状态：未登录点一下去登录，已登录点一下退出登录。
+function aimsLoginStatusClick() {
+  if (aimsLoggedIn()) { if (typeof doLogout === 'function') doLogout(); }
+  else if (typeof aimsGoToLogin === 'function') aimsGoToLogin();
+}
+// 强制改密码：把用户送去「系统设置 → 修改密码」，并在那里一直停到改完。
+// 其余页面在 showPage 里都会弹回这里；改完密码后标志清除，各页恢复正常。
+function aimsGoToChangePassword() {
+  var nav = document.querySelector('.nav-btn[onclick*="\'sys\'"]');
+  if (nav && typeof showPage === 'function') showPage('sys', nav);
+  if (typeof aimsOpenChangePassword === 'function') aimsOpenChangePassword();
+  var bar = document.getElementById('sessionBanner');
+  if (bar) { bar.style.display = ''; bar.textContent = t('pwMustChange'); }
+}
 function aimsRenderSession() {
   var box = document.getElementById('sessionInfo');
   var form = document.getElementById('loginFields');
   var bar = document.getElementById('sessionBanner');
   var signed = !!aimsTokens().access;
+  if (signed && typeof aimsHidePageLock === 'function') aimsHidePageLock();  // 登录后锁定屏必须消失
   if (box) {
     box.style.display = signed ? '' : 'none';
     var who = document.getElementById('sessionUser');
@@ -1047,7 +1186,135 @@ function aimsRenderSession() {
   }
   if (form) form.style.display = signed ? 'none' : '';
   if (bar && signed) bar.style.display = 'none';
+  // 侧栏底部登录状态：登录后显示用户名，未登录显示“未登录”；切换语言时由这里重画。
+  // 颜色：已登录浅绿，未登录红色。
+  var ls = document.getElementById('loginStatusText');
+  var lsBox = document.getElementById('loginStatus');
+  if (lsBox) lsBox.style.color = signed ? '#73d13d' : '#ff4d4f';
+  if (ls) {
+    if (!signed) ls.textContent = t('loginStatusOut');
+    else if (_aimsUser) ls.textContent = tf('loginStatusIn', _aimsUser.username);
+    else ls.textContent = t('signedInGeneric');
+  }
+  // 角色页的改密码入口只给超级管理员（用户管理权限）看。
+  var rolePw = document.getElementById('sysRolePw');
+  if (rolePw) rolePw.style.display = (_aimsUser && _aimsUser.is_superuser) ? '' : 'none';
+  aimsRenderAdminOnly();
+  aimsRefreshLocks();
+  aimsReportUiState();
 }
+// 只有超级管理员看得到的入口（角色页里的“重置用户密码”）。服务端另有 get_current_superuser 把关，这里只管显示。
+function aimsRenderAdminOnly() {
+  var on = !!(aimsTokens().access && _aimsUser && _aimsUser.is_superuser && !_aimsUser.must_change_password);
+  var p = document.getElementById('rpPanel');
+  if (p) p.style.display = on ? '' : 'none';
+}
+// ===== 登录门禁 =====
+// 未登录时进不了这些页面：点击会跳到「系统设置 → 登录」，登录成功后自动回到原来想去的页面。
+// 「系统设置」页本身承载登录表单，所以未登录时只开放“登录”这一个标签页，其余设置类标签页锁定。
+// 数据分析（danal）也是高级功能（AI 解读、导入、图表），未登录同样锁定；
+// 仪表盘 / 设备 / 通讯 / 告警 / 数据是基础浏览页，未登录时只显示演示数据，仍可看。
+// 要增减受保护的页面只改这一个数组。
+var AIMS_LOCKED_PAGES = ['ai', 'know', 'tpl', 'maint', 'asset', 'lab', 'ext', 'sys', 'danal'];
+var AIMS_SYS_OPEN_TABS = ['login'];
+var _aimsPendingPage = null;
+var _aimsPendingTab = null;
+function aimsLoggedIn() { return !!aimsTokens().access; }
+function aimsPageLocked(id) { return AIMS_LOCKED_PAGES.indexOf(id) >= 0 && !aimsLoggedIn(); }
+function aimsRefreshLocks() {
+  var logged = aimsLoggedIn();
+  if (typeof aimsEnforcePages === 'function') aimsEnforcePages();
+  document.querySelectorAll('.nav-btn').forEach(function(b) {
+    var m = /showPage\('(\w+)'/.exec(b.getAttribute('onclick') || '');
+    b.classList.toggle('locked', !!(m && AIMS_LOCKED_PAGES.indexOf(m[1]) >= 0 && !logged));
+  });
+  var activeTabId = null;
+  document.querySelectorAll('#page-sys .tab-btn').forEach(function(b) {
+    var m = /switchSysTab\('(\w+)'/.exec(b.getAttribute('onclick') || '');
+    var open = logged || (m && AIMS_SYS_OPEN_TABS.indexOf(m[1]) >= 0);
+    if (logged && aimsMustChangePassword()) open = !!(m && m[1] === 'password');  // 默认口令未改：只开放“修改密码”
+    b.style.display = open ? '' : 'none';
+    if (b.classList.contains('active') && m) activeTabId = m[1];
+  });
+  if (!logged && activeTabId && AIMS_SYS_OPEN_TABS.indexOf(activeTabId) < 0) {
+    var lb = document.querySelector('#page-sys .tab-btn[onclick*="\'login\'"]');
+    if (lb && typeof switchSysTab === 'function') switchSysTab('login', lb);
+  }
+  var note = document.getElementById('pwForcedNote');
+  if (note) note.style.display = aimsMustChangePassword() ? '' : 'none';
+  if (logged && aimsMustChangePassword() && activeTabId && activeTabId !== 'password') {
+    if (typeof aimsOpenChangePassword === 'function') aimsOpenChangePassword();
+  }
+}
+function aimsShowLoginNeeded(id) {
+  var name = ((translations[currentLang] || {})['pageTitle_' + id]) || id;
+  var bar = document.getElementById('sessionBanner');
+  if (bar) { bar.style.display = ''; bar.textContent = tf('loginNeeded', name); }
+}
+// 未登录打开受保护页面：不直接跳走，而是在该页面原地显示锁定屏——
+// 页面内容本身不渲染，🔒 + 页面名 + “去登录”按钮都在本页，登录后自动回到这里。
+// 这才是“直接锁定”：侧栏的 🔒 只是提示，进页面才真正锁住。
+function aimsShowPageLock(id) {
+  _aimsPendingPage = id;
+  document.querySelectorAll('.page').forEach(function(p) { p.classList.remove('active'); });
+  document.querySelectorAll('.nav-btn').forEach(function(b) { b.classList.remove('active'); });
+  var nav = document.querySelector('.nav-btn[onclick*="\'' + id + '\'"]');
+  if (nav) nav.classList.add('active');
+  var name = ((translations[currentLang] || {})['pageTitle_' + id]) || id;
+  var title = document.getElementById('aimsPageLockTitle');
+  if (title) title.textContent = tf('pageLockTitle', name);
+  var desc = document.getElementById('aimsPageLockDesc');
+  if (desc) desc.textContent = t('pageLockDesc');
+  var lock = document.getElementById('aimsPageLock');
+  if (lock) lock.style.display = '';
+  var pt = document.getElementById('pageTitle');
+  if (pt) pt.textContent = name;
+  aimsShowLoginNeeded(id);
+}
+function aimsHidePageLock() {
+  var lock = document.getElementById('aimsPageLock');
+  if (lock) lock.style.display = 'none';
+}
+function aimsAfterLogin() {
+  aimsHidePageLock();
+  var p = _aimsPendingPage; _aimsPendingPage = null;
+  if (p && !aimsPageLocked(p)) showPage(p, document.querySelector('.nav-btn[onclick*="\'' + p + '\'"]'));
+  var tb = _aimsPendingTab; _aimsPendingTab = null;
+  if (tb && p === 'sys') {
+    var btn = document.querySelector('#page-sys .tab-btn[onclick*="\'' + tb + '\'"]');
+    if (btn && typeof switchSysTab === 'function') switchSysTab(tb, btn);
+  }
+}
+// 托盘“设置”用 #sys/settings 这样的 hash 直达指定页面/标签页。
+// 未登录时先记下来去登录，登录成功后 aimsAfterLogin 再跳过去。
+function aimsApplyDeepLink() {
+  var h = (location.hash || '').replace(/^#/, '');
+  if (!h) return;
+  var parts = h.split('/');
+  var page = parts[0], tab = parts[1] || null;
+  var pages = ['dash', 'dev', 'comm', 'alarm', 'data', 'danal', 'ai', 'know', 'tpl', 'maint', 'asset', 'lab', 'ext', 'sys'];
+  if (pages.indexOf(page) < 0) return;
+  if (!aimsLoggedIn()) {
+    _aimsPendingPage = page;
+    if (page === 'sys' && tab) _aimsPendingTab = tab;
+    if (page === 'sys') aimsGoToLogin();
+    else aimsShowPageLock(page);
+    return;
+  }
+  var nav = document.querySelector('.nav-btn[onclick*="\'' + page + '\'"]');
+  if (nav) showPage(page, nav);
+  if (page === 'sys' && tab) {
+    var tb = document.querySelector('#page-sys .tab-btn[onclick*="\'' + tab + '\'"]');
+    if (tb) switchSysTab(tab, tb);
+  }
+}
+function aimsKickIfLocked() {      // 会话失效/退出登录时，若正停在受保护页面，原地显示锁定屏
+  var ap = document.querySelector('.page.active');
+  if (!ap) return;
+  var pid = ap.id.replace(/^page-/, '');
+  if (pid !== 'sys' && aimsPageLocked(pid)) { aimsShowPageLock(pid); }
+}
+document.addEventListener('DOMContentLoaded', aimsRefreshLocks);
 // Another tab logged in/out or rotated the refresh token: follow it.
 window.addEventListener('storage', function(e) {
   if (e.key === 'aims_token' || e.key === 'aims_refresh') {
@@ -1058,10 +1325,17 @@ window.addEventListener('storage', function(e) {
 document.addEventListener('DOMContentLoaded', function() {
   if (aimsTokens().access) {
     aimsScheduleRefresh();
-    aimsFetch('/auth/me').then(function(me) { _aimsUser = me; aimsRenderSession(); })
+    if (aimsMustChangePassword()) aimsGoToChangePassword();
+    aimsFetch('/auth/me').then(function(me) {
+      _aimsUser = me;
+      if (me.must_change_password !== undefined) aimsSetMustChangePassword(!!me.must_change_password);
+      aimsRenderSession();
+      if (aimsMustChangePassword()) aimsGoToChangePassword();
+    })
       .catch(function(e) { if (e && e.httpStatus === 401) aimsSessionExpired(); });
   }
   aimsRenderSession();
+  aimsApplyDeepLink();
 });
 
 function aimsFetch(path, options) {
@@ -1095,6 +1369,13 @@ function aimsFetch(path, options) {
       err.httpStatus = resp.status;
       var ra = parseInt(resp.headers.get('Retry-After'), 10);
       if (!isNaN(ra)) err.retryAfter = ra;
+      if (resp.status === 403 && body && body.detail === 'password_change_required') {
+        // 服务端要求先改密码（比如页面启动时的自动取数先于 /auth/me）：补上标志并跳过去。
+        err.message = t('pwForcedShort');
+        aimsSetMustChangePassword(true);
+        aimsRenderSession();
+        aimsGoToChangePassword();
+      }
       if (resp.status === 401 && path.indexOf('/auth/') !== 0) {
         // 受保护接口返回 401：曾经登录过（带过 Token）→ 全局重新认证提示；
         // 匿名访问（从未登录）→ 保持页面内的静默提示，不弹"登录已失效"。
@@ -1302,12 +1583,57 @@ const translations = {
     passShow: 'Show', passHide: 'Hide', capsLockOn: 'Caps Lock is on',
     placeholderUser: 'Enter username', placeholderPass: 'Enter password',
     signedInAs: 'Signed in as ', signOut: 'Sign out',
+    loginNeeded: 'Please sign in to use “{0}”.', pageLockTitle: '“{0}” is locked', pageLockDesc: 'Please sign in to use this page. You will return here after signing in.', loginDefaultHint: 'Default account / password: admin / admin123',
     sessionExpired: "Your session has expired. Please sign in again (System → Login).",
     loginRequired: "Please sign in first (System → Login).",
     backendUnreachable: "Cannot reach the backend, or you are not signed in: ",
     signIn: "Sign in",
     dismiss: "Dismiss",
     signedInGeneric: "Signed in",
+    loginStatusIn: "Signed in: {0}", loginStatusOut: "Not signed in",
+    sysTabPassword: "Change Password", pwOpen: "Change password", pwTitle: "Change Password",
+    pwRules: "At least 12 characters, mixing at least 3 of: lowercase, uppercase, digits, symbols. Must not be a common password or contain your username.",
+    pwCurrent: "Current password", pwNew: "New password", pwConfirm: "Confirm new password", pwSubmit: "Change password",
+    pwErrEmpty: "Please fill in all three fields.",
+    pwErrMismatch: "The new password and its confirmation do not match.",
+    pwErrSame: "The new password must differ from the current one.",
+    pwErrShort: "The new password must be at least {0} characters.",
+    pwErrCurrent: "The current password is incorrect. Repeated failures will temporarily lock this form.",
+    pwErrCommon: "That password is too common. Choose a less guessable one.",
+    pwErrUsername: "The password must not contain your username.",
+    pwErrRepetitive: "That password is too repetitive.",
+    pwErrMix: "Mix at least 3 of: lowercase, uppercase, digits, symbols.",
+    pwErrTooLong: "The password is too long (at most {0} bytes).",
+    pwErrOther: "The new password was rejected: {0}",
+    pwErrFailed: "Could not change the password: {0}",
+    pwChanging: "Changing password...",
+    rpTitle: "Reset a user's password",
+    rpHint: "Super administrators only. Sets a new password for another account and signs that user out everywhere. To change your own password use the Change Password tab.",
+    rpUser: "User", rpNew: "New password", rpConfirm: "Confirm new password", rpSubmit: "Reset password",
+    rpNoUsers: "No other users", rpDisabled: "disabled", rpErrPick: "Choose a user first.",
+    rpConfirmAsk: "Reset the password of {0}? They will be signed out everywhere.",
+    rpDone: "Password for {0} has been reset and their sessions ended. Give them the new password through a safe channel.",
+    rpErrForbidden: "Only a super administrator can reset passwords.",
+    acctTitle: "Login account & password", acctNewTitle: "Add a login account", acctUser: "Username", acctPass: "Password",
+    acctFull: "Display name (optional)", acctRole: "Role", acctSuper: "Super administrator (all permissions)",
+    acctCreate: "Create account", acctListTitle: "Accounts", acctAdminOnly: "Only a super administrator can add accounts and change permissions.",
+    permTitle: "Permission settings", permSave: "Save permissions", pageDenied: "You do not have permission to use “{0}”.",
+    pwForced: "First sign-in with the default account: you must change the password before using the rest of the system.",
+    pwForcedShort: "Please change your password first (System → Change Password).",
+    pwSuccess: "Password changed. Other signed-in devices have been signed out; this one stays signed in.",
+    pwMustChange: "You are signed in with the default administrator password. Change your password before using other features.",
+    sysSettingsTitle: "System Settings",
+    apiEndpointLabel: "API Endpoint",
+    refreshIntervalLabel: "Auto Refresh Interval (seconds)",
+    saveSettingsBtn: "Save Settings",
+    settingsSaving: "Saving settings...",
+    settingsSavedDetail: "Settings saved. API: {0}, refresh every {1}s.",
+    settingsSavedLocal: "Backend unreachable — settings saved in this browser only.",
+    settingsSaveFailed: "Could not save settings. Check the backend and try again.",
+    settingsLoadFailed: "Could not load saved settings from the backend; showing local values.",
+    setErrFailed: "Settings request failed: {0}",
+    settingsInvalidInterval: "Refresh interval must be a whole number of seconds between 5 and 3600.",
+    settingsNeedAdmin: "Saving settings needs an administrator account.",
     signedOutOtherTab: "Signed out in another tab.",
     fileTooLargeServer: "File is too large for the server (limit {0} MB).",
     tooManyRequests: "Too many requests. Please wait and try again.",
@@ -1381,12 +1707,57 @@ const translations = {
     passShow: '显示', passHide: '隐藏', capsLockOn: '大写锁定已开启',
     placeholderUser: '请输入用户名', placeholderPass: '请输入密码',
     signedInAs: '已登录：', signOut: '退出登录',
+    loginNeeded: '请先登录后使用「{0}」。', pageLockTitle: '「{0}」已锁定', pageLockDesc: '请先登录后使用此页面，登录后会自动回到这里。', loginDefaultHint: '默认账号 / 密码：admin / admin123',
     sessionExpired: "登录已失效，请重新登录（系统设置 → 登录）。",
     loginRequired: "请先登录（系统设置 → 登录）。",
     backendUnreachable: "无法连接后端或未登录：",
     signIn: "去登录",
     dismiss: "关闭",
     signedInGeneric: "已登录",
+    loginStatusIn: "已登录：{0}", loginStatusOut: "未登录",
+    sysTabPassword: "修改密码", pwOpen: "修改密码", pwTitle: "修改密码",
+    pwRules: "至少 12 位，且大写字母、小写字母、数字、符号至少包含其中 3 类；不能是常见口令，也不能包含用户名。",
+    pwCurrent: "当前密码", pwNew: "新密码", pwConfirm: "确认新密码", pwSubmit: "修改密码",
+    pwErrEmpty: "请把三项都填上。",
+    pwErrMismatch: "两次输入的新密码不一致。",
+    pwErrSame: "新密码不能和当前密码相同。",
+    pwErrShort: "新密码至少需要 {0} 位。",
+    pwErrCurrent: "当前密码不正确。连续输错会暂时锁住这个表单。",
+    pwErrCommon: "这个密码太常见，换一个不容易被猜到的。",
+    pwErrUsername: "密码不能包含用户名。",
+    pwErrRepetitive: "密码里重复的字符太多。",
+    pwErrMix: "大写字母、小写字母、数字、符号至少要包含其中 3 类。",
+    pwErrTooLong: "密码太长（最多 {0} 字节）。",
+    pwErrOther: "新密码未被接受：{0}",
+    pwErrFailed: "修改密码失败：{0}",
+    pwChanging: "正在修改密码……",
+    rpTitle: "重置用户密码",
+    rpHint: "仅超级管理员可用。为另一个账号设置新密码，并让该用户在所有设备上退出登录。自己的密码请用“修改密码”标签页。",
+    rpUser: "用户", rpNew: "新密码", rpConfirm: "确认新密码", rpSubmit: "重置密码",
+    rpNoUsers: "没有其他用户", rpDisabled: "已停用", rpErrPick: "请先选择一个用户。",
+    rpConfirmAsk: "确定重置 {0} 的密码吗？该用户会在所有设备上退出登录。",
+    rpDone: "已重置 {0} 的密码，其所有会话已失效。请通过安全的方式把新密码告诉他。",
+    rpErrForbidden: "只有超级管理员才能重置密码。",
+    acctTitle: "登录账号与密码设置", acctNewTitle: "新增登录账号", acctUser: "用户名", acctPass: "密码",
+    acctFull: "姓名（可选）", acctRole: "角色", acctSuper: "超级管理员（拥有全部权限）",
+    acctCreate: "创建账号", acctListTitle: "账号列表", acctAdminOnly: "只有超级管理员才能新增账号和修改权限。",
+    permTitle: "权限设置", permSave: "保存权限", pageDenied: "你没有使用「{0}」的权限。",
+    pwForced: "首次使用默认账号登录：必须先修改密码，才能使用系统的其他功能。",
+    pwForcedShort: "请先修改密码（系统设置 → 修改密码）。",
+    pwSuccess: "密码已修改。其他已登录的设备已被退出，当前设备保持登录。",
+    pwMustChange: "当前使用默认管理员口令登录，请先修改密码，再使用其他功能。",
+    sysSettingsTitle: "系统设置",
+    apiEndpointLabel: "API 端点",
+    refreshIntervalLabel: "自动刷新间隔（秒）",
+    saveSettingsBtn: "保存设置",
+    settingsSaving: "正在保存设置……",
+    settingsSavedDetail: "设置已保存。API：{0}，每 {1} 秒刷新一次。",
+    settingsSavedLocal: "无法连接后端，设置仅保存在本浏览器中。",
+    settingsSaveFailed: "保存设置失败，请检查后端后重试。",
+    settingsLoadFailed: "无法从后端加载已保存的设置，显示的是本机保存的值。",
+    setErrFailed: "设置请求失败：{0}",
+    settingsInvalidInterval: "刷新间隔须为 5 到 3600 之间的整数秒。",
+    settingsNeedAdmin: "保存设置需要管理员账号。",
     signedOutOtherTab: "已在其他标签页退出登录。",
     fileTooLargeServer: "文件超出服务器限制（上限 {0} MB）。",
     tooManyRequests: "请求过于频繁，请稍候再试。",
@@ -1559,14 +1930,11 @@ var I18N_PAIRS = [
   ["Points On File", "已存点数"],
   ["Auto Refresh", "自动刷新"],
   ["Click or drag Excel file here", "点击或拖拽Excel文件到此处"],
-  ["Supports .xlsx / .xls / .csv", "支持 .xlsx / .xls / .csv 格式"],
-  ["Browser security requires clicking to select files.", "浏览器安全策略要求点击选择文件"],
   ["Batch import to server (saved as dataset + live data)", "批量导入到服务器（保存为数据集+实时数据）"],
   ["Choose File and Import", "选择文件并导入"],
   ["Worksheet", "工作表"],
   ["0 rows, 0 cols", "0 行，0 列"],
   ["X Axis Field", "X轴字段"],
-  ["Usually select \"Time\", or any numeric/text column.", "通常选择“时间”，也可选择任意数值/文本列。"],
   ["Curve Fields (Multi-select)", "曲线字段（多选）"],
   ["Search indicators...", "搜索指标..."],
   ["Select All Numeric", "全选数值列"],
@@ -1593,19 +1961,13 @@ var I18N_PAIRS = [
   ["Reset", "重置"],
   ["File", "文件"],
   ["Not Imported", "未导入"],
-  ["Please select Excel", "请选择Excel"],
   ["Original Rows", "原始行数"],
-  ["Excluding header", "不含表头"],
   ["Fields", "字段"],
-  ["Numeric 0", "数值列 0"],
   ["Processed", "处理后"],
-  ["Waiting", "等待中"],
   ["Curve", "曲线"],
   ["Preview", "预览"],
   ["Statistics", "统计"],
   ["Schema", "模式"],
-  ["Please import Excel file.", "请导入Excel文件。"],
-  ["Import file and select curves to display here.", "导入文件并选择曲线后在此显示。"],
   ["Diagnosis", "诊断"],
   ["Prediction", "预测"],
   ["LLM Chat", "LLM对话"],
@@ -1849,6 +2211,8 @@ function _i18nRerenderDynamic() {
       var at = document.querySelector('#page-ext .tc.active');
       if (at && at.id === 'ext-db') loadExtDatabases();
       if (at && at.id === 'ext-gap') loadExtGaps();
+    } else if (ap.id === 'page-tpl') {
+      tplLoadCategories(); tplLoad();
     } else if (ap.id === 'page-data') {
       if (typeof dmLoadCloud === 'function') dmLoadCloud();
       if (typeof dmLoadImports === 'function') dmLoadImports();
@@ -1917,12 +2281,8 @@ function updateAllUIText(dict) {
   if (dataTabs[2] && dict.history) dataTabs[2].textContent = dict.history;
   if (dataTabs[3] && dict.cloudSync) dataTabs[3].textContent = dict.cloudSync;
   
-  var aiTabs = document.querySelectorAll('#page-ai .tab-btn');
-  if (aiTabs[0] && dict.diagnosis) aiTabs[0].textContent = dict.diagnosis;
-  if (aiTabs[1] && dict.prediction) aiTabs[1].textContent = dict.prediction;
-  if (aiTabs[2] && dict.healthScore) aiTabs[2].textContent = dict.healthScore;
-  if (aiTabs[3] && dict.llmChat) aiTabs[3].textContent = dict.llmChat;
-  if (aiTabs[4] && dict.models) aiTabs[4].textContent = dict.models;
+  // AI 中心的标签页文字由 data-ai-i18n（tabDiag/tabPred/tabHealth/tabSel/tabApply/tabModels/tabEngine）驱动。
+// 以前这里按序号映射，加了“选型”标签后整体错位，导致“LLM 对话”被命名成“模型下载”。
 
   
   var kbTabs = document.querySelectorAll('#page-know .tab-btn');
@@ -1990,6 +2350,18 @@ updateClock();
 
 // ===== Page Navigation =====
 function showPage(id, btn) {
+  if (aimsMustChangePassword() && id !== 'sys') {   // 默认口令未改：先去改密码
+    aimsGoToChangePassword();
+    return;
+  }
+  if (id !== 'sys' && aimsPageLocked(id)) {   // 未登录：受保护页面原地锁定，不跳走
+    aimsShowPageLock(id);
+    return;
+  }
+  if (aimsPageDenied(id)) {                   // 已登录但角色没有这个页面的权限
+    alert(tf('pageDenied', ((translations[currentLang] || {})['pageTitle_' + id]) || id));
+    return;
+  }
   document.querySelectorAll('.page').forEach(function(p) { p.classList.remove('active'); });
   document.querySelectorAll('.nav-btn').forEach(function(b) { b.classList.remove('active'); });
   var page = document.getElementById('page-' + id);
@@ -2010,6 +2382,7 @@ function showPage(id, btn) {
   if (id === 'ext') extOnEnter();
   if (id === 'ai') aiOnEnter();
   if (id === 'maint' || id === 'lab') aiBindDeviceSelects();
+  aimsRefreshLocks();
 }
 
 // ===== Demo Data =====
@@ -2593,6 +2966,7 @@ function removeGateway(index) {
 // into AI Center with a device pre-selected, and AI Center jumps back out.
 var AI_T = {
   en: {
+    tabDiag: "Diagnosis", tabPred: "Prediction", tabHealth: "Health", tabApply: "Model Status", tabModels: "Model Download", tabEngine: "Model Engine", msTitle: "Model status", msRefresh: "Refresh", modelsEngineDesc: "Local inference engine for the GGUF models above. Install one that matches your hardware, then restart the backend service.", natEngTitle: "Standalone engine (works in the packaged EXE)", natEngDesc: "Official prebuilt llama.cpp Windows binaries, downloaded from GitHub releases into the data directory. Works in the packaged EXE — no pip, no rebuild. CUDA needs its ~390 MB runtime companion too (about 710 MB total).", pipEngTitle: "Python package install (source / dev mode only)", pipEngDesc: "Installs llama-cpp-python with pip. Refused inside the packaged EXE — use the standalone engine above instead.", engBannerTitle: "Inference engine:", linkModels: "Model Download", linkEngine: "Model Engine", goModels: "Download models / install engine ↗", secModelsTitle: "Model Download", secModelsDesc: "Open-source offline cores used by Diagnosis / Prediction / Health / Model Status. Download packs for local use or offline EXE bundling. Data Analysis chart libraries (Chart.js / xlsx) are also listed.", secEngineTitle: "Inference Engine", secEngineDesc: "To run the GGUF models downloaded above you first need to install a matching inference engine. Pick one for your hardware and restart the backend service afterwards. Installing needs an administrator account and is only available when running from source / dev mode — for a packaged EXE, edit requirements-exe-ai.txt and rerun build_exe.bat.", depsTitle: "Other analysis dependencies", depsDesc: "Used by anomaly detection and trend forecasting.",
     tabSel: 'Selection', pickPh: 'Search devices: code, name, model, location, TAG… or e.g. "online GC H2S"',
     noSel: 'No device selected — search above to pick one', clear: 'Clear',
     pickDevFirst: 'Select a device first (search box above).', noTag: 'No TAG — import tags in Devices/Comm first',
@@ -2606,7 +2980,7 @@ var AI_T = {
     rising: 'Rising', falling: 'Falling', stable: 'Stable', forecast: 'Forecast', ci: '95% band',
     healthy: 'Healthy', attention: 'Attention', critical: 'Critical',
     selHint: 'Describe what you need, or fill in the fields below. Devices are ranked by whether they can measure what you need, then by health, availability, data readiness and open alarms/work orders.',
-    selQueryPh: 'e.g. online GC that measures H2S and CO2  /  需要能测硫化氢和二氧化碳的在线色谱',
+    selQueryPh: 'e.g. an online GC that measures H2S and CO2 (Chinese queries work too)',
     selCompsPh: 'Required components (comma separated), e.g. H2S, CO2', anyType: 'Any type', anyProto: 'Any protocol',
     selLocPh: 'Location contains…', onlineOnly: 'Online only', minHealth: 'Min health', recommend: 'Recommend',
     reqLbl: 'Requirement', considered: '{n} of {m} devices considered', noCand: 'No device meets the hard constraints.',
@@ -2619,6 +2993,7 @@ var AI_T = {
     menuDev: 'Devices', menuComm: 'Comm', menuData: 'Data Analysis', menuMaint: 'Maintenance', menuAsset: 'Assets', menuLab: 'Lab', menuDash: 'Dashboard'
   },
   zh: {
+    tabDiag: "诊断", tabPred: "预测", tabHealth: "健康评分", tabApply: "模型状态", tabModels: "模型下载", tabEngine: "模型引擎", msTitle: "模型状态", msRefresh: "刷新", modelsEngineDesc: "上面这些 GGUF 模型需要本地推理引擎才能运行。按你的硬件选一个安装，装完重启后端服务。", natEngTitle: "独立推理引擎（EXE 安装版可用）", natEngDesc: "官方 llama.cpp 预编译 Windows 二进制，从 GitHub 发布页下载到数据目录。打包后的 EXE 也能装，不用 pip、不用重新打包。CUDA 版还要再下约 390 MB 的运行时伴生包，合计约 710 MB。", pipEngTitle: "Python 包安装（仅源码 / 开发模式）", pipEngDesc: "用 pip 安装 llama-cpp-python。打包后的 EXE 里会被拒绝，请用上面那个独立引擎。", engBannerTitle: "推理引擎：", linkModels: "模型下载", linkEngine: "模型引擎", goModels: "去下载模型 / 安装引擎 ↗", secModelsTitle: "模型下载", secModelsDesc: "诊断 / 预测 / 健康 / 模型状态使用的开源离线核心包。可下载后本地使用或用于离线 EXE 打包。数据分析图表库（Chart.js / xlsx）一并列出。", secEngineTitle: "推理引擎", secEngineDesc: "运行上面下载的 GGUF 模型，需要先安装对应的推理引擎。根据你的硬件选一个安装，装完建议重启后端服务。安装需要管理员账号，且仅在源码/开发模式运行时可用——如果是打包后的 EXE，需要修改 requirements-exe-ai.txt 并重新运行 build_exe.bat 打包。", depsTitle: "其他分析依赖", depsDesc: "异常检测与趋势预测会用到。",
     tabSel: '选型', pickPh: '搜索设备：编号、名称、型号、位置、TAG… 或输入 "在线 色谱 硫化氢"',
     noSel: '尚未选择设备 —— 请在上方搜索并选择', clear: '清除',
     pickDevFirst: '请先在上方搜索框选择一台设备。', noTag: '该设备暂无 TAG —— 请先在 Devices/Comm 导入 TAG',
@@ -2632,7 +3007,7 @@ var AI_T = {
     rising: '上升', falling: '下降', stable: '平稳', forecast: '预测值', ci: '95% 区间',
     healthy: '健康', attention: '需关注', critical: '严重',
     selHint: '描述你的需求，或填写下面的字段。系统先看设备能否测量所需组分，再综合健康分、可用性、数据就绪度以及未处理的报警/工单来排序。',
-    selQueryPh: '例：需要能测硫化氢和二氧化碳的在线色谱  /  online GC that measures H2S and CO2',
+    selQueryPh: '例：需要能测硫化氢和二氧化碳的在线色谱（也支持英文描述）',
     selCompsPh: '需测组分（逗号分隔），例如 H2S, CO2', anyType: '任意类型', anyProto: '任意协议',
     selLocPh: '位置包含…', onlineOnly: '仅在线', minHealth: '最低健康分', recommend: '推荐',
     reqLbl: '需求', considered: '共 {m} 台设备，{n} 台通过硬性条件', noCand: '没有设备满足硬性条件。',
@@ -3577,7 +3952,7 @@ function sendChat() {
         reply = L('AI chat request failed (HTTP ', 'AI 对话请求失败（HTTP ') + status + L('): ', '）：') + msg;
       }
     } else if (err && err.name === 'AbortError') {
-      reply = L('The local model timed out (>180 s). The first load is slow on small models / CPU-only machines; retry shortly, or pick a smaller model on the Models tab.', '本地模型响应超时（>180 秒）。小模型/CPU 环境下首次加载较慢，请稍后重试，或在“模型下载”页换更小的模型。');
+      reply = L('The local model timed out (>180 s). The first load is slow on small models / CPU-only machines; retry shortly, or pick a smaller model on the Model Download tab.', '本地模型响应超时（>180 秒）。小模型/CPU 环境下首次加载较慢，请稍后重试，或在“模型下载”页换更小的模型。');
     } else {
       reply = L('Cannot reach the backend: ', '无法连接后端：') + msg;
     }
@@ -3594,13 +3969,14 @@ function loadChatModelOptions() {
   var hint = document.getElementById('chatModelHint');
   if (!sel) return;
   sel.innerHTML = '<option value="">Loading models...</option>';
+  aiLoadModelStatus();
   aimsFetch('/ai/cores', {timeout: 15000}).then(function(cores) {
     var llms = cores.filter(function(c){ return c.kind === 'llm'; });
     var downloaded = llms.filter(function(c){ return c.in_db; });
     if (downloaded.length === 0) {
       sel.innerHTML = '<option value="">No local model downloaded yet</option>';
       sel.disabled = true;
-      hint.textContent = L('No local LLM has been downloaded yet — go to the Models tab to download one, or without one this chat falls back to rule-based/offline replies.', '尚未下载本地大模型——请到“模型下载”页下载一个；没有模型时，对话会回退为规则/离线回复。');
+      hint.textContent = L('No local LLM has been downloaded yet — go to the Model Download tab to download one, or without one this chat falls back to rule-based/offline replies.', '尚未下载本地大模型——请到“模型下载”页下载一个；没有模型时，对话会回退为规则/离线回复。');
       return;
     }
     sel.disabled = false;
@@ -3616,6 +3992,44 @@ function loadChatModelOptions() {
     sel.disabled = true;
     hint.textContent = 'Backend unreachable — chat will use canned offline demo replies.';
   });
+}
+
+// 「模型状态」面板：推理引擎装没装、当前用的对话/向量模型、已下载几个。数据全部来自后端（/ai/cores、/ai/packages），取不到就如实写“不可用”。
+function aiLoadModelStatus() {
+  var box = document.getElementById('aiModelStatusRows');
+  if (!box) return;
+  box.textContent = L('Loading…', '加载中…');
+  Promise.all([
+    aimsFetch('/ai/cores', {timeout: 15000}).catch(function() { return null; }),
+    aimsFetch('/ai/packages', {timeout: 15000}).catch(function() { return null; }),
+    aimsFetch('/ai/engines', {timeout: 15000}).catch(function() { return null; })
+  ]).then(function(r) { aiRenderModelStatus(r[0], r[1], r[2]); });
+}
+function aiRenderModelStatus(cores, pkgs, nativeEngines) {
+  var box = document.getElementById('aiModelStatusRows');
+  if (!box) return;
+  if (!cores && !pkgs && !nativeEngines) { box.textContent = L('Status unavailable: backend unreachable or not signed in.', '状态不可用：后端连不上，或尚未登录。'); return; }
+  var rows = [];
+  if (pkgs || nativeEngines) {
+    var eng = pkgs ? pkgs.filter(function(p) { return aiIsEnginePkg(p) && p.installed; })[0] : null;
+    var nat = nativeEngines ? nativeEngines.filter(function(e) { return e.installed; })[0] : null;
+    rows.push('<div>' + L('Inference engine: ', '推理引擎：') + (eng
+      ? '<span class="tag tg">✔ ' + L('Installed', '已安装') + ' (llama.cpp' + (eng.version ? ' v' + escHtml(eng.version) : '') + ')</span>'
+      : nat
+      ? '<span class="tag tg">✔ ' + L('Installed', '已安装') + ' (llama.cpp' + (nat.tag ? ' ' + escHtml(nat.tag) : '') + ' · ' + L('standalone', '独立安装') + (nat.verify_ok === false ? ' · ' + L('not verified to run', '未验证运行') : '') + ')</span>'
+      : '<span class="tag to">✘ ' + L('Not installed', '未安装') + '</span> <a href="#" class="ai-link" onclick="aiGoModelsTab();return false">'
+        + L('Download engine ↗', '去下载推理引擎 ↗') + '</a>') + '</div>');
+  }
+  if (cores) {
+    var act = function(kind) { return cores.filter(function(c) { return c.kind === kind && c.active; })[0]; };
+    var llm = act('llm'), emb = act('embedding');
+    var name = function(c) { return c ? escHtml(c.name) + (c.in_db ? '' : ' (' + L('not downloaded', '未下载') + ')') : L('none', '未设置'); };
+    var got = cores.filter(function(c) { return c.in_db; }).length;
+    rows.push('<div>' + L('Chat model: ', '对话模型：') + name(llm) + '</div>');
+    rows.push('<div>' + L('Embedding model: ', '向量模型：') + name(emb) + '</div>');
+    rows.push('<div>' + L('Downloaded: ', '已下载：') + got + ' / ' + cores.length + '</div>');
+  }
+  box.innerHTML = rows.join('');
 }
 
 function setChatModel(coreId) {
@@ -3736,11 +4150,50 @@ function switchAiTab(tab, btn) {
   document.querySelectorAll('#page-ai .tc').forEach(function(c){c.classList.remove('active')});
   btn.classList.add('active');
   document.getElementById('ai-'+tab).classList.add('active');
-  if (tab === 'models') { refreshAiModels(); loadPyPackages(); }
+  if (tab === 'models') { refreshAiModels(); loadPyPackages(); loadNativeEngines(); }
+  if (tab === 'engine') { loadPyPackages(); }
   if (tab === 'chat') loadChatModelOptions();
   var bar = document.getElementById('aiPickerBar');
-  if (bar) bar.style.display = (tab === 'sel' || tab === 'models') ? 'none' : '';
+  if (bar) bar.style.display = (tab === 'sel' || tab === 'models' || tab === 'engine') ? 'none' : '';
   if (tab === 'sel') aiLoadFacets();
+}
+
+// ===== Runtime local-AI package installer (llama-cpp-python etc.) =====
+function aiIsEnginePkg(p) { return /^llama-/.test(p.id); }   // llama.cpp 的 CPU / CUDA 构建才是推理引擎；其余是分析依赖
+
+function aiJump(id) {
+  var el = document.getElementById(id);
+  if (el && el.scrollIntoView) el.scrollIntoView({behavior: 'smooth', block: 'start'});
+}
+function aiGoModelsTab() {
+  var b = document.querySelector('#page-ai .tab-btn[onclick*="\'models\'"]');
+  if (b) switchAiTab('models', b);
+}
+function aiGoEngineTab() {
+  var b = document.querySelector('#page-ai .tab-btn[onclick*="\'engine\'"]');
+  if (b) switchAiTab('engine', b);
+}
+
+// 页面顶部的推理引擎状态条：一眼看出“GGUF 模型能不能跑”
+function aiRenderEngineBanner(pkgs, errMsg) {
+  var wrap = document.getElementById('aiEngineBanner');
+  var box = document.getElementById('aiEngineBannerState');
+  if (!wrap || !box) return;
+  if (!pkgs) {
+    wrap.style.background = '#fafafa'; wrap.style.borderColor = '#d9d9d9';
+    box.textContent = errMsg || L('Status unavailable', '状态不可用');
+    return;
+  }
+  var ok = pkgs.filter(function(p) { return aiIsEnginePkg(p) && p.installed; })[0];
+  if (ok) {
+    wrap.style.background = '#f6ffed'; wrap.style.borderColor = '#b7eb8f';
+    box.textContent = '✔ ' + L('Installed', '已安装') + ' (llama.cpp' + (ok.version ? ' v' + ok.version : '') + ') — '
+      + L('downloaded GGUF models can be used under “Model Status”.', '已下载的 GGUF 模型可在「模型状态」中使用。');
+  } else {
+    wrap.style.background = '#fffbe6'; wrap.style.borderColor = '#ffe58f';
+    box.textContent = '✘ ' + L('Not installed', '未安装') + ' — '
+      + L('GGUF models need an inference engine; install one in the “Inference Engine” section below.', 'GGUF 模型需要推理引擎才能运行，请在下方「推理引擎」中安装。');
+  }
 }
 
 // ===== Runtime local-AI package installer (llama-cpp-python etc.) =====
@@ -3748,69 +4201,152 @@ function loadPyPackages() {
   var list = document.getElementById('pyPackagesList');
   var status = document.getElementById('pyPackagesStatus');
   if (!list) return;
-  var zh = currentLang === 'zh';
-  status.textContent = zh ? '正在加载安装包状态...' : 'Loading package status...';
+  status.textContent = L('Loading package status...', '正在加载安装包状态...');
   aimsFetch('/ai/packages', {timeout: 15000}).then(function(pkgs) {
     renderPyPackages(pkgs);
-    var installedCount = pkgs.filter(function(p){ return p.installed; }).length;
-    status.textContent = zh
-      ? ('共 ' + pkgs.length + ' 个可选安装包，已安装 ' + installedCount + ' 个。')
-      : (pkgs.length + ' packages available, ' + installedCount + ' installed.');
-  }).catch(function() {
-    status.textContent = zh ? '无法连接后端。' : 'Backend unreachable.';
+    aiRenderEngineBanner(pkgs);
+    var engines = pkgs.filter(aiIsEnginePkg);
+    var n = engines.filter(function(p) { return p.installed; }).length;
+    status.textContent = L(engines.length + ' engine builds available, ' + n + ' installed.',
+                           '共 ' + engines.length + ' 个推理引擎版本可选，已安装 ' + n + ' 个。');
+  }).catch(function(e) {
+    // 没有 httpStatus = 根本没连上后端（不是被拒绝）：直接说清要先启动后端，
+    // 否则“无法连接后端”一句看不出下一步该做什么。
+    var msg = (e && e.httpStatus) ? ((e && e.message) || '')
+      : L('Backend unreachable. Start the backend service first — engines can only be listed and installed while it is running.',
+          '无法连接后端。请先启动后端服务，推理引擎只有在后端运行时才能列出和安装。');
+    status.textContent = msg;
+    aiRenderEngineBanner(null, msg);
   });
 }
 
-function renderPyPackages(pkgs) {
-  var list = document.getElementById('pyPackagesList');
+function pyPkgCardHtml(p) {
   var zh = currentLang === 'zh';
-  list.innerHTML = pkgs.map(function(p) {
-    var name = zh ? p.name : p.name_en;
-    var desc = zh ? p.description : p.description_en;
-    var statusBadge = p.installed
-      ? '<span class="tag tg" style="font-size:11px">' + (zh ? '已安装' : 'Installed') + (p.version ? (' v' + p.version) : '') + '</span>'
-      : '<span class="tag to" style="font-size:11px">' + (zh ? '未安装' : 'Not installed') + '</span>';
-    return '<div class="py-pkg-card" style="border:1px solid #e8e8e8;border-radius:8px;padding:14px;background:#fff">'
-      + '<div style="display:flex;justify-content:space-between;align-items:start;margin-bottom:8px;gap:8px">'
-      + '<strong style="font-size:14px">' + name + '</strong>' + statusBadge
-      + '</div>'
-      + '<p style="font-size:12px;color:#666;margin:0 0 12px">' + desc + '</p>'
-      + '<button class="btn btn-primary" style="width:100%" onclick="installPyPackage(\'' + p.id + '\', this)">' + (zh ? '安装' : 'Install') + '</button>'
-      + '<div class="py-pkg-log" style="font-size:11px;color:#999;margin-top:8px;white-space:pre-wrap;max-height:120px;overflow:auto"></div>'
-      + '</div>';
-  }).join('');
+  var name = zh ? p.name : p.name_en;
+  var desc = zh ? p.description : p.description_en;
+  var statusBadge = p.installed
+    ? '<span class="tag tg" style="font-size:11px">' + (zh ? '已安装' : 'Installed') + (p.version ? (' v' + p.version) : '') + '</span>'
+    : '<span class="tag to" style="font-size:11px">' + (zh ? '未安装' : 'Not installed') + '</span>';
+  return '<div class="py-pkg-card" style="border:1px solid #e8e8e8;border-radius:8px;padding:14px;background:#fff">'
+    + '<div style="display:flex;justify-content:space-between;align-items:start;margin-bottom:8px;gap:8px">'
+    + '<strong style="font-size:14px">' + escHtml(name) + '</strong>' + statusBadge
+    + '</div>'
+    + '<p style="font-size:12px;color:#666;margin:0 0 12px">' + escHtml(desc) + '</p>'
+    + '<button class="btn btn-primary" style="width:100%" onclick="installPyPackage(\'' + escHtml(p.id) + '\', this)">' + (zh ? '安装' : 'Install') + '</button>'
+    + '<div class="py-pkg-log" style="font-size:11px;color:#999;margin-top:8px;white-space:pre-wrap;max-height:120px;overflow:auto"></div>'
+    + '</div>';
+}
+
+function renderPyPackages(pkgs) {
+  var eng = document.getElementById('pyPackagesList');
+  var deps = document.getElementById('pyDepsList');
+  if (eng) eng.innerHTML = pkgs.filter(aiIsEnginePkg).map(pyPkgCardHtml).join('');
+  var eng2 = document.getElementById('aiModelsEngineList');     // “模型下载”页里的引擎下载区，同一批引擎构建
+  if (eng2) eng2.innerHTML = pkgs.filter(aiIsEnginePkg).map(pyPkgCardHtml).join('');
+  if (deps) deps.innerHTML = pkgs.filter(function(p) { return !aiIsEnginePkg(p); }).map(pyPkgCardHtml).join('');
 }
 
 function installPyPackage(id, btn) {
-  var zh = currentLang === 'zh';
   var card = btn.closest('.py-pkg-card');
   var logEl = card ? card.querySelector('.py-pkg-log') : null;
   btn.disabled = true;
   var origText = btn.textContent;
-  btn.textContent = zh ? '安装中...(可能需要几分钟)' : 'Installing... (may take a few minutes)';
+  btn.textContent = L('Installing... (may take a few minutes)', '安装中...(可能需要几分钟)');
   if (logEl) logEl.textContent = '';
-
-  fetch(apiBase() + '/ai/packages/' + id + '/install', {method: 'POST'})
-    .then(function(resp) {
-      return resp.json().catch(function(){ return {}; }).then(function(body) { return {ok: resp.ok, body: body}; });
-    })
-    .then(function(r) {
-      btn.disabled = false;
-      btn.textContent = origText;
-      if (!r.ok) {
-        var msg = (r.body && r.body.detail) || (zh ? '未知错误' : 'unknown error');
-        if (logEl) logEl.textContent = msg;
-        alert((zh ? '安装失败：' : 'Install failed: ') + msg);
-        return;
-      }
-      if (logEl && r.body.log_tail) logEl.textContent = r.body.log_tail.slice(-1000);
-      alert(zh ? '安装完成！建议重启后端服务以确保生效。' : 'Installed! A backend restart is recommended to make sure it takes effect.');
+  // 必须走 aimsFetch：接口要求超级管理员令牌。以前这里是裸 fetch（不带 Authorization），
+  // 所以“安装”按钮即使登录了管理员也一定返回 401。
+  aimsFetch('/ai/packages/' + encodeURIComponent(id) + '/install', {method: 'POST', timeout: 20 * 60 * 1000})
+    .then(function(body) {
+      btn.disabled = false; btn.textContent = origText;
+      if (logEl && body && body.log_tail) logEl.textContent = String(body.log_tail).slice(-1000);
+      alert(L('Installed! A backend restart is recommended to make sure it takes effect.', '安装完成！建议重启后端服务以确保生效。'));
       loadPyPackages();
     })
     .catch(function(err) {
+      btn.disabled = false; btn.textContent = origText;
+      var msg = (err && err.message) || L('unknown error', '未知错误');
+      if (logEl) logEl.textContent = msg;
+      alert(L('Install failed: ', '安装失败：') + msg);
+    });
+}
+
+function fmtEngineSize(n) {
+  if (!n) return '';
+  if (n >= 1e9) return (n / 1e9).toFixed(1) + ' GB';
+  if (n >= 1e6) return Math.round(n / 1e6) + ' MB';
+  return Math.round(n / 1e3) + ' KB';
+}
+
+// ===== Standalone native engine installer (Model Download page) =====
+// Downloads official prebuilt llama.cpp Windows binaries — the one engine
+// install that also works inside the packaged EXE (the pip installer above
+// is refused there). Install is superuser-only server-side.
+function loadNativeEngines() {
+  var list = document.getElementById('aiNativeEnginesList');
+  var status = document.getElementById('aiNativeEnginesStatus');
+  if (!list) return;
+  if (status) status.textContent = L('Loading engine status...', '正在加载引擎状态...');
+  aimsFetch('/ai/engines', {timeout: 15000}).then(function(engines) {
+    var zh = currentLang === 'zh';
+    list.innerHTML = engines.map(function(e) {
+      var name = zh ? e.name : e.name_en;
+      var desc = zh ? e.description : e.description_en;
+      var badge = e.installed
+        ? '<span class="tag tg" style="font-size:11px">' + (zh ? '已安装' : 'Installed') + (e.tag ? (' ' + escHtml(e.tag)) : '') + (e.verify_ok === false ? ' · ' + (zh ? '未验证运行' : 'not verified to run') : '') + '</span>'
+        : '<span class="tag to" style="font-size:11px">' + (zh ? '未安装' : 'Not installed') + '</span>';
+      var meta = (e.requires ? escHtml(e.requires) : '') + (e.download_size_hint ? ' · ' + (zh ? '约下载 ' : 'about ') + fmtEngineSize(e.download_size_hint) : '');
+      var btns = e.installed
+        ? '<button class="btn btn-gray" style="width:100%" onclick="uninstallNativeEngine(\'' + escHtml(e.id) + '\', this)">' + (zh ? '卸载' : 'Uninstall') + '</button>'
+        : '<button class="btn btn-primary" style="width:100%" onclick="installNativeEngine(\'' + escHtml(e.id) + '\', this)">' + (zh ? '安装' : 'Install') + '</button>';
+      return '<div class="py-pkg-card" style="border:1px solid #e8e8e8;border-radius:8px;padding:14px;background:#fff">'
+        + '<div style="display:flex;justify-content:space-between;align-items:start;margin-bottom:8px;gap:8px">'
+        + '<strong style="font-size:14px">' + escHtml(name) + '</strong>' + badge + '</div>'
+        + '<p style="font-size:12px;color:#666;margin:0 0 8px">' + escHtml(desc) + '</p>'
+        + '<p style="font-size:12px;color:#999;margin:0 0 12px">' + meta + '</p>'
+        + btns
+        + '<div class="py-pkg-log" style="font-size:11px;color:#999;margin-top:8px;white-space:pre-wrap;max-height:120px;overflow:auto"></div>'
+        + '</div>';
+    }).join('');
+    var n = engines.filter(function(e) { return e.installed; }).length;
+    if (status) status.textContent = L(engines.length + ' standalone engines available, ' + n + ' installed.',
+      '共 ' + engines.length + ' 个独立引擎可选，已安装 ' + n + ' 个。');
+  }).catch(function(e) {
+    if (status) status.textContent = (e && e.message) || L('Engine status unavailable.', '引擎状态不可用。');
+  });
+}
+
+function installNativeEngine(id, btn) {
+  var card = btn.closest('.py-pkg-card');
+  var logEl = card ? card.querySelector('.py-pkg-log') : null;
+  btn.disabled = true;
+  var origText = btn.textContent;
+  btn.textContent = L('Installing... (may take a while for large downloads)', '安装中...（大文件下载需要较久）');
+  if (logEl) logEl.textContent = '';
+  aimsFetch('/ai/engines/' + encodeURIComponent(id) + '/install', {method: 'POST', timeout: 30 * 60 * 1000})
+    .then(function(body) {
+      btn.disabled = false; btn.textContent = origText;
+      var note = (body && body.verify_ok === false)
+        ? L(' Installed, but the engine did not pass its startup check — see the card for details.', ' 已安装，但启动自检未通过，详情见卡片。')
+        : L(' Installed! The engine is ready to use.', ' 安装完成，引擎已就绪。');
+      alert(L('Engine', '引擎') + note);
+      loadNativeEngines(); loadPyPackages();
+    })
+    .catch(function(err) {
+      btn.disabled = false; btn.textContent = origText;
+      var msg = (err && err.message) || L('unknown error', '未知错误');
+      if (logEl) logEl.textContent = msg;
+      alert(L('Install failed: ', '安装失败：') + msg);
+    });
+}
+
+function uninstallNativeEngine(id, btn) {
+  if (!confirm(L('Uninstall this standalone engine? Downloaded model files are not affected.', '确定卸载这个独立引擎吗？已下载的模型文件不受影响。'))) return;
+  btn.disabled = true;
+  aimsFetch('/ai/engines/' + encodeURIComponent(id) + '?confirm=true', {method: 'DELETE', timeout: 60000})
+    .then(function() { loadNativeEngines(); })
+    .catch(function(err) {
       btn.disabled = false;
-      btn.textContent = origText;
-      alert((zh ? '安装请求失败：' : 'Install request failed: ') + err.message);
+      alert(L('Uninstall failed: ', '卸载失败：') + ((err && err.message) || L('unknown error', '未知错误')));
     });
 }
 
@@ -4354,12 +4890,18 @@ function extLoadCoverage() {
 
 // ===== System =====
 function switchSysTab(tab, btn) {
+  if (aimsMustChangePassword() && tab !== 'password') {   // 默认口令未改：只允许“修改密码”
+    aimsOpenChangePassword();
+    return;
+  }
   document.querySelectorAll('#page-sys .tab-btn').forEach(function(b){b.classList.remove('active')});
   document.querySelectorAll('#page-sys .tc').forEach(function(c){c.classList.remove('active')});
   btn.classList.add('active');
   document.getElementById('sys-'+tab).classList.add('active');
   if (tab === 'users') loadSysUsers();
   if (tab === 'audit') loadSysAudit();
+  if (tab === 'settings') { loadSettings(); aimsLoadAccountSettings(); }
+  if (tab === 'roles') { loadRoleResetUsers(); loadRoleMatrix(); }
   if (tab === 'components') loadSysComponents();
 }
 
@@ -4427,13 +4969,16 @@ function doLogin() {
     document.getElementById('loginPass').value = '';
     return aimsFetch('/auth/me').then(function(me) {
       _aimsUser = me;
+      if (me.must_change_password !== undefined) aimsSetMustChangePassword(!!me.must_change_password);
       result.className = 'login-result success';
       result.textContent = t('loginSuccess') + me.username + (me.is_superuser ? t('loginAdminTag') : '');
       aimsRenderSession();
       aimsLoginBusy(false);
+      if (aimsMustChangePassword()) { aimsGoToChangePassword(); return; }
       // 登录后立刻拉一次真实数据：此前未登录时按设计不发受保护请求，
       // 页面停留在演示数据，登录成功应当自动换成数据库里的真实内容。
       if (typeof refreshData === 'function') refreshData();
+      aimsAfterLogin();
     });
   }).catch(function(loginErr) {
     // There is deliberately no local/offline "demo login": a session exists only if the server issued one.
@@ -4463,8 +5008,8 @@ function doLogin() {
 }
 
 function doLogout() {
-  var t = aimsTokens();
-  var body = t.refresh ? JSON.stringify({ refresh_token: t.refresh }) : '{}';
+  var tok = aimsTokens();   // 不能叫 t：会遮住翻译函数 t()，下面的 t('signedOut') 就会抛 “t is not a function”
+  var body = tok.refresh ? JSON.stringify({ refresh_token: tok.refresh }) : '{}';
   return aimsFetch('/auth/logout', { method: 'POST', body: body, _retried: true })
     .catch(function() {})
     .then(function() {
@@ -4475,11 +5020,493 @@ function doLogout() {
     });
 }
 
+// ===== 修改密码（系统设置 → 修改密码）=====
+// 调后端已有的 POST /auth/change-password。成功后后端会吊销该用户全部刷新令牌（其他设备被退出），
+// 并返回一对新令牌给当前会话——必须存下来，否则当前页面下一次刷新就会被踢出。
+var _pwLockTimer = null;
+function aimsOpenChangePassword() {
+  var tab = document.querySelector('#page-sys .tab-btn[onclick*="\'password\'"]');
+  if (tab) switchSysTab('password', tab);
+  var f = document.getElementById('pwCurrent'); if (f) f.focus();
+}
+function aimsPwShow(cls, text, resultId) {
+  var r = document.getElementById(resultId || 'pwResult');
+  if (!r) return;
+  r.style.display = 'block'; r.className = 'login-result' + (cls ? ' ' + cls : ''); r.textContent = text;
+}
+function aimsPwBusy(on, btnId) {
+  var b = document.getElementById(btnId || 'pwBtn');
+  if (b) { b.disabled = !!on; b.style.opacity = on ? '0.6' : ''; }
+}
+// 把后端的英文错误翻成当前界面语言；认不出的原样带上。
+function aimsPwServerMsg(status, detail) {
+  var d = String(detail || '');
+  var m;
+  if (status === 400 && /current password is incorrect/i.test(d)) return t('pwErrCurrent');
+  if (/must differ from the current/i.test(d)) return t('pwErrSame');
+  if ((m = /at least (\d+) characters/i.exec(d))) return tf('pwErrShort', m[1]);
+  if ((m = /at most (\d+) bytes/i.exec(d))) return tf('pwErrTooLong', m[1]);
+  if (/too common/i.test(d)) return t('pwErrCommon');
+  if (/contain the username/i.test(d)) return t('pwErrUsername');
+  if (/too repetitive/i.test(d)) return t('pwErrRepetitive');
+  if (/mix at least 3/i.test(d)) return t('pwErrMix');
+  if (status === 422) return tf('pwErrOther', d);
+  return tf('pwErrFailed', d);
+}
+function aimsPwStartLockout(seconds, resultId, btnId) {
+  if (_pwLockTimer) clearInterval(_pwLockTimer);
+  var end = Date.now() + Math.max(1, seconds) * 1000;
+  function tick() {
+    var left = Math.ceil((end - Date.now()) / 1000);
+    if (left <= 0) {
+      clearInterval(_pwLockTimer); _pwLockTimer = null;
+      aimsPwBusy(false, btnId); aimsPwShow('', t('lockoutTryAgain'), resultId);
+      return;
+    }
+    var mm = Math.floor(left / 60), ss = ('0' + (left % 60)).slice(-2);
+    aimsPwShow('error', tf('lockoutRetry', mm, ss), resultId);
+  }
+  aimsPwBusy(true, btnId); tick();
+  _pwLockTimer = setInterval(tick, 1000);
+}
+// POST /auth/change-password：两个改密码入口（系统设置 → 修改密码、角色页）共用。
+// 接口在 /auth/ 下，aimsFetch 不会替它自动续期；访问令牌刚好过期时这里续一次再重发。
+function _postChangePassword(cur, nw) {
+  var body = JSON.stringify({ current_password: cur, new_password: nw });
+  function send(retried) {
+    var tok = aimsTokens().access;
+    return aimsFetch('/auth/change-password', { method: 'POST', body: body, timeout: 20000 })
+      .catch(function(e) {
+        if (e && e.httpStatus === 401 && !retried && aimsTokens().refresh) {
+          return aimsRefresh(tok).then(function() { return send(true); });
+        }
+        throw e;
+      });
+  }
+  return send(false);
+}
+function doChangePassword() {
+  if (_pwLockTimer) return;                          // 被锁：倒计时在显示
+  var cur = document.getElementById('pwCurrent').value;
+  var nw = document.getElementById('pwNew').value;
+  var cf = document.getElementById('pwConfirm').value;
+  if (!cur || !nw || !cf) return aimsPwShow('error', t('pwErrEmpty'));
+  if (nw !== cf) return aimsPwShow('error', t('pwErrMismatch'));
+  if (nw === cur) return aimsPwShow('error', t('pwErrSame'));
+  if (nw.length < 12) return aimsPwShow('error', tf('pwErrShort', 12));
+  aimsPwShow('', t('pwChanging'));
+  aimsPwBusy(true);
+  _postChangePassword(cur, nw).then(function(data) {
+    aimsStoreTokens(data);   // 新令牌里 must_change_password 已是 false：标志随之清除，各页恢复正常
+    aimsScheduleRefresh();
+    aimsRefreshLocks();
+    ['pwCurrent', 'pwNew', 'pwConfirm'].forEach(function(id) { document.getElementById(id).value = ''; });
+    aimsPwBusy(false);
+    aimsPwShow('success', t('pwSuccess'));
+  }).catch(function(e) {
+    var st = e && e.httpStatus;
+    if (st === 429) return aimsPwStartLockout(e.retryAfter || 900);
+    aimsPwBusy(false);
+    if (st === 401) { aimsSessionExpired(aimsExpiredMsg()); return; }
+    if (st) return aimsPwShow('error', aimsPwServerMsg(st, e.message));
+    aimsPwShow('error', (e && e.name === 'AbortError') ? t('loginErrTimeout') : t('loginErrUnreachable'));
+  });
+}
+
+// 角色页的改密码入口：只给超级管理员看（用户管理权限），改的是当前登录账号自己的口令，
+// 与“系统设置 → 修改密码”调同一个 POST /auth/change-password。
+function doRoleChangePassword() {
+  if (_pwLockTimer) return;                          // 被锁：倒计时在显示
+  var cur = document.getElementById('rolePwCurrent').value;
+  var nw = document.getElementById('rolePwNew').value;
+  var cf = document.getElementById('rolePwConfirm').value;
+  if (!cur || !nw || !cf) return aimsPwShow('error', t('pwErrEmpty'), 'rolePwResult');
+  if (nw !== cf) return aimsPwShow('error', t('pwErrMismatch'), 'rolePwResult');
+  if (nw === cur) return aimsPwShow('error', t('pwErrSame'), 'rolePwResult');
+  if (nw.length < 12) return aimsPwShow('error', tf('pwErrShort', 12), 'rolePwResult');
+  aimsPwShow('', t('pwChanging'), 'rolePwResult');
+  aimsPwBusy(true, 'rolePwBtn');
+  _postChangePassword(cur, nw).then(function(data) {
+    aimsStoreTokens(data);
+    aimsScheduleRefresh();
+    aimsRefreshLocks();
+    ['rolePwCurrent', 'rolePwNew', 'rolePwConfirm'].forEach(function(id) { document.getElementById(id).value = ''; });
+    aimsPwBusy(false, 'rolePwBtn');
+    aimsPwShow('success', t('pwSuccess'), 'rolePwResult');
+  }).catch(function(e) {
+    var st = e && e.httpStatus;
+    if (st === 429) return aimsPwStartLockout(e.retryAfter || 900, 'rolePwResult', 'rolePwBtn');
+    aimsPwBusy(false, 'rolePwBtn');
+    if (st === 401) { aimsSessionExpired(aimsExpiredMsg()); return; }
+    if (st) return aimsPwShow('error', aimsPwServerMsg(st, e.message), 'rolePwResult');
+    aimsPwShow('error', (e && e.name === 'AbortError') ? t('loginErrTimeout') : t('loginErrUnreachable'), 'rolePwResult');
+  });
+}
+
+// ===== 系统设置 → 设置：存在后端 /system/settings，localStorage 只做离线兜底 =====
+// 存两项：ui.api_endpoint（API 端点）、ui.refresh_interval（自动刷新间隔秒数）。
+// 打开设置页时先读后端；后端连不上才用本机保存的值。保存时先写后端；写失败
+// （连不上）才只写本机，并如实告诉用户；没权限（403）则不写本机、直接提示。
+function _settingsShow(kind, text) {
+  var r = document.getElementById('saveResult');
+  if (!r) return;
+  var cls = kind === 'critical' ? 'alert-critical' : (kind === 'warning' ? 'alert-warning' : 'alert-normal');
+  r.innerHTML = '<div class="alert-item ' + cls + '">' + escHtml(text) + '</div>';
+}
+
+// ===== 设置页：登录账号与密码设置 / 权限设置 =====
+// 服务端对 /system/users、/system/role-permissions 等都要求超级管理员；这里只决定显不显示。
+var _permData = null;     // {roles: [...], perms: [...]}
+function acctShow(id, cls, text) {
+  var r = document.getElementById(id);
+  if (!r) return;
+  r.style.display = 'block'; r.className = 'login-result' + (cls ? ' ' + cls : ''); r.textContent = text;
+}
+function aimsLoadAccountSettings() {
+  var mine = document.getElementById('acctMine');
+  var admin = document.getElementById('acctAdmin'), perm = document.getElementById('permAdmin'), note = document.getElementById('acctNotAdmin');
+  if (!mine) return;
+  aimsFetch('/auth/me').then(function(me) {
+    _aimsUser = me;
+    mine.innerHTML = '<div>' + L('Signed in as: ', '当前登录账号：') + '<strong>' + escHtml(me.username) + '</strong></div>'
+      + '<div>' + L('Permission: ', '使用权限：') + escHtml(me.permission || '-') + '</div>';
+    var prof = document.getElementById('myProfile');
+    if (prof) {
+      prof.style.display = '';
+      var f = document.getElementById('myFull'), em = document.getElementById('myEmail');
+      if (f && document.activeElement !== f) f.value = me.full_name || '';
+      if (em && document.activeElement !== em) em.value = me.email || '';
+    }
+    var isAdmin = !!me.is_superuser;
+    if (admin) admin.style.display = isAdmin ? '' : 'none';
+    if (perm) perm.style.display = isAdmin ? '' : 'none';
+    if (note) note.style.display = isAdmin ? 'none' : '';
+    if (isAdmin) { acctReload(); permReload(); }
+  }).catch(function(e) { mine.textContent = L('Load failed: ', '加载失败：') + ((e && e.message) || e); });
+}
+function acctReload() {
+  var body = document.getElementById('acctBody');
+  Promise.all([aimsFetch('/system/users?limit=200'), aimsFetch('/system/roles')]).then(function(r) {
+    var users = r[0] || [], roles = r[1] || [];
+    var opts = function(sel) {
+      return '<option value="">' + L('(no role)', '（无角色）') + '</option>' + roles.map(function(x) {
+        return '<option value="' + escHtml(x.code) + '"' + (x.code === sel ? ' selected' : '') + '>' + escHtml(x.name) + '</option>'; }).join('');
+    };
+    var nr = document.getElementById('acctRole');
+    if (nr) { var keep = nr.value; nr.innerHTML = opts(keep || 'engineer'); }
+    var me = _aimsUser ? _aimsUser.id : null;
+    body.innerHTML = users.map(function(u) {
+      var self = (u.id === me);
+      return '<tr><td>' + u.id + '</td><td>' + escHtml(u.username) + (u.is_superuser ? ' <span class="tag tg">' + L('Super admin', '超级管理员') + '</span>' : '') + '</td>'
+        + '<td>' + (u.is_superuser ? '-' : '<select onchange="acctSetRole(' + u.id + ',this.value)" style="padding:4px;border:1px solid #d9d9d9;border-radius:4px">' + opts((u.roles || [])[0] || '') + '</select>') + '</td>'
+        + '<td>' + (u.is_active ? '<span class="tag tg">' + L('Enabled', '启用') + '</span>' : '<span class="tag to">' + L('Disabled', '停用') + '</span>') + '</td>'
+        + '<td><button class="btn btn-gray" style="padding:2px 8px" onclick="acctResetPw(' + u.id + ')">' + L('Set password', '设置密码') + '</button> '
+        + (self ? '' : '<button class="btn btn-gray" style="padding:2px 8px" onclick="acctToggle(' + u.id + ',' + (u.is_active ? 'false' : 'true') + ')">' + (u.is_active ? L('Disable', '停用') : L('Enable', '启用')) + '</button>'
+        + ' <button class="btn btn-gray" style="padding:2px 8px" onclick="sysDeleteUser(' + u.id + ',\'' + escHtml(u.username) + '\')">' + L('Delete', '删除') + '</button>') + '</td></tr>';
+    }).join('') || '<tr><td colspan="5" style="text-align:center;color:#999">' + L('No users', '无用户') + '</td></tr>';
+  }).catch(function(e) { if (body) body.innerHTML = '<tr><td colspan="5" style="color:#f5222d">' + L('Load failed: ', '加载失败：') + escHtml((e && e.message) || e) + '</td></tr>'; });
+}
+function doCreateAccount() {
+  var u = document.getElementById('acctUser').value.trim(), p = document.getElementById('acctPass').value;
+  var full = document.getElementById('acctFull').value.trim(), role = document.getElementById('acctRole').value;
+  var sup = document.getElementById('acctSuper').checked;
+  if (!u || !p) return acctShow('acctResult', 'error', L('Enter a username and a password.', '请填写用户名和密码。'));
+  var b = document.getElementById('acctCreateBtn'); b.disabled = true;
+  var body = {username: u, password: p, is_superuser: sup, roles: (role && !sup) ? [role] : []};
+  if (full) body.full_name = full;
+  aimsFetch('/system/users', {method: 'POST', body: JSON.stringify(body)}).then(function() {
+    b.disabled = false;
+    document.getElementById('acctUser').value = ''; document.getElementById('acctPass').value = ''; document.getElementById('acctFull').value = '';
+    document.getElementById('acctSuper').checked = false;
+    acctShow('acctResult', 'success', L('Account created: ', '账号已创建：') + u);
+    acctReload();
+  }).catch(function(e) {
+    b.disabled = false;
+    var st = e && e.httpStatus, m = (e && e.message) || '';
+    if (st === 409) return acctShow('acctResult', 'error', L('That username already exists.', '该用户名已存在。'));
+    if (st === 403) return acctShow('acctResult', 'error', t('rpErrForbidden'));
+    acctShow('acctResult', 'error', aimsPwServerMsg(st, m));
+  });
+}
+function acctSetRole(id, code) {
+  aimsFetch('/system/users/' + id + '/roles', {method: 'PUT', body: JSON.stringify({roles: code ? [code] : []})})
+    .then(acctReload).catch(function(e) { alert(L('Operation failed: ', '操作失败：') + ((e && e.message) || e)); acctReload(); });
+}
+function acctToggle(id, active) {
+  if (!confirm(active ? L('Enable this user?', '启用该用户？') : L('Disable this user? They will not be able to sign in.', '停用该用户？停用后无法登录。'))) return;
+  aimsFetch('/system/users/' + id, {method: 'PATCH', body: JSON.stringify({is_active: active})})
+    .then(acctReload).catch(function(e) { alert(L('Operation failed: ', '操作失败：') + ((e && e.message) || e)); });
+}
+function acctResetPw(id) {
+  var pw = prompt(L('New password for this account (12+ characters, mixing 3 of: lowercase, uppercase, digits, symbols). They will be signed out everywhere and must set their own password at next sign-in.',
+                    '请输入该账号的新密码（至少 12 位，小写/大写/数字/符号至少三类）。该账号会在所有设备上被退出登录，下次登录时必须先改成自己的密码。'));
+  if (!pw) return;
+  aimsFetch('/system/users/' + id, {method: 'PATCH', body: JSON.stringify({password: pw})})
+    .then(function() { alert(L('Password updated. They must set their own password at next sign-in.', '密码已更新。该账号下次登录时必须先改成自己的密码。')); })
+    .catch(function(e) { alert(aimsPwServerMsg(e && e.httpStatus, (e && e.message) || '')); });
+}
+function permReload() {
+  Promise.all([aimsFetch('/system/role-permissions'), aimsFetch('/system/permissions')]).then(function(r) {
+    _permData = {roles: r[0] || [], perms: r[1] || []};
+    var sel = document.getElementById('permRole');
+    var keep = sel.value;
+    sel.innerHTML = _permData.roles.map(function(x) { return '<option value="' + x.id + '">' + escHtml(x.name) + ' (' + escHtml(x.code) + ')</option>'; }).join('');
+    if (keep) sel.value = keep;
+    permRender();
+  }).catch(function(e) {
+    var g = document.getElementById('permGrid');
+    if (g) g.innerHTML = '<span style="color:#f5222d">' + L('Load failed: ', '加载失败：') + escHtml((e && e.message) || e) + '</span>';
+  });
+}
+function permLabel(p) {
+  if (p.module === 'page') {
+    var id = p.code.replace(/^page\./, '');
+    return ((translations[currentLang] || {})['pageTitle_' + id]) || id;
+  }
+  return p.name;
+}
+function permRender() {
+  var grid = document.getElementById('permGrid'), sel = document.getElementById('permRole');
+  if (!_permData || !grid || !sel) return;
+  var role = _permData.roles.filter(function(x) { return String(x.id) === sel.value; })[0];
+  if (!role) { grid.innerHTML = ''; return; }
+  var isAdminRole = role.code === 'admin';
+  var has = {}; (role.permissions || []).forEach(function(c) { has[c] = true; });
+  var groups = {};
+  _permData.perms.forEach(function(p) { (groups[p.module === 'page' ? 'page' : 'api'] = groups[p.module === 'page' ? 'page' : 'api'] || []).push(p); });
+  var titles = {page: L('Page access (enforced by the interface)', '页面访问（由界面限制）'), api: L('API permissions (enforced by the server)', '接口权限（由服务端强制）')};
+  grid.innerHTML = ['page', 'api'].filter(function(g) { return groups[g]; }).map(function(g) {
+    return '<div style="margin-bottom:12px"><div style="font-weight:600;margin-bottom:6px">' + titles[g] + '</div><div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:6px">'
+      + groups[g].map(function(p) {
+        return '<label style="font-size:13px"><input type="checkbox" class="permChk" value="' + escHtml(p.code) + '"' + ((isAdminRole || has[p.code]) ? ' checked' : '') + (isAdminRole ? ' disabled' : '') + '> ' + escHtml(permLabel(p)) + '</label>';
+      }).join('') + '</div></div>';
+  }).join('') + (isAdminRole ? '<div class="ai-muted">' + L('The Administrator role always has every permission.', '管理员角色永远拥有全部权限，不可修改。') + '</div>' : '');
+  document.getElementById('permSaveBtn').disabled = isAdminRole;
+}
+function permSave() {
+  var sel = document.getElementById('permRole');
+  var codes = Array.prototype.slice.call(document.querySelectorAll('#permGrid .permChk:checked')).map(function(c) { return c.value; });
+  aimsFetch('/system/roles/' + sel.value + '/permissions', {method: 'PUT', body: JSON.stringify({permissions: codes})}).then(function() {
+    acctShow('permResult', 'success', L('Permissions saved. Affected users see the change the next time they sign in.', '权限已保存。受影响的用户下次登录后生效。'));
+    permReload();
+  }).catch(function(e) {
+    acctShow('permResult', 'error', (e && e.httpStatus === 403) ? t('rpErrForbidden') : (L('Save failed: ', '保存失败：') + ((e && e.message) || e)));
+  });
+}
+
+// ===== 角色页：实时权限矩阵（以前是写死的假表，与真实角色/权限对不上）=====
+// 行是权限（页面访问 + 接口权限），列是角色，✓/– 直接取自 /system/role-permissions。
+function loadRoleMatrix() {
+  var box = document.getElementById('roleMatrix');
+  var adminBox = document.getElementById('roleAdmin');
+  if (!box) return;
+  Promise.all([aimsFetch('/system/role-permissions'), aimsFetch('/system/permissions')]).then(function(r) {
+    var roles = r[0] || [], perms = r[1] || [];
+    var isAdmin = _aimsUser && _aimsUser.is_superuser;
+    if (adminBox) adminBox.style.display = isAdmin ? '' : 'none';
+    if (!roles.length) { box.innerHTML = '<div class="ai-muted">' + L('No roles', '暂无角色') + '</div>'; return; }
+    var has = {};
+    roles.forEach(function(x) { has[x.code] = {}; (x.permissions || []).forEach(function(c) { has[x.code][c] = true; }); });
+    var groups = {page: [], api: []};
+    perms.forEach(function(p) { groups[p.module === 'page' ? 'page' : 'api'].push(p); });
+    var titles = {page: L('Page access', '页面访问'), api: L('API permissions', '接口权限')};
+    var html = ['page', 'api'].filter(function(g) { return groups[g].length; }).map(function(g) {
+      var rows = groups[g].map(function(p) {
+        return '<tr><td>' + escHtml(permLabel(p)) + '</td>' + roles.map(function(x) {
+          return '<td style="text-align:center">' + (has[x.code][p.code] ? '✓' : '-') + '</td>';
+        }).join('') + '</tr>';
+      }).join('');
+      return '<div style="margin-bottom:12px;font-weight:600">' + titles[g] + '</div>'
+        + '<div class="table-wrap"><table><thead><tr><th>' + L('Permission', '权限') + '</th>'
+        + roles.map(function(x) { return '<th style="text-align:center">' + escHtml(x.name) + '</th>'; }).join('')
+        + '</tr></thead><tbody>' + rows + '</tbody></table></div>';
+    }).join('');
+    if (isAdmin) {
+      html += '<div style="margin-top:12px">' + roles.map(function(x) {
+        if (x.code === 'admin') return '';
+        return '<button class="btn btn-gray" style="padding:2px 8px;margin-right:6px" onclick="roleDelete(' + x.id + ',\'' + escHtml(x.code) + '\')">'
+          + L('Delete role: ', '删除角色：') + escHtml(x.name) + '</button>';
+      }).join('') + '</div>';
+    }
+    box.innerHTML = html;
+  }).catch(function(e) {
+    box.innerHTML = '<span style="color:#f5222d">' + L('Load failed: ', '加载失败：') + escHtml((e && e.message) || e) + '</span>';
+  });
+}
+function doCreateRole() {
+  var code = document.getElementById('roleCode').value.trim().toLowerCase();
+  var name = document.getElementById('roleName').value.trim();
+  var desc = document.getElementById('roleDesc').value.trim();
+  if (!code || !name) return acctShow('roleResult', 'error', L('Enter a role code and name.', '请填写角色代号和名称。'));
+  if (!/^[a-z0-9_]+$/.test(code)) return acctShow('roleResult', 'error', L('Role code: lowercase letters, digits and underscores only.', '角色代号只允许小写字母、数字、下划线。'));
+  var b = document.getElementById('roleCreateBtn'); b.disabled = true;
+  aimsFetch('/system/roles', {method: 'POST', body: JSON.stringify({code: code, name: name, description: desc || null})}).then(function() {
+    b.disabled = false;
+    document.getElementById('roleCode').value = ''; document.getElementById('roleName').value = ''; document.getElementById('roleDesc').value = '';
+    acctShow('roleResult', 'success', L('Role created: ', '角色已创建：') + code);
+    loadRoleMatrix(); permReload();
+  }).catch(function(e) {
+    b.disabled = false;
+    var st = e && e.httpStatus;
+    if (st === 409) return acctShow('roleResult', 'error', L('That role code already exists.', '该角色代号已存在。'));
+    if (st === 422) return acctShow('roleResult', 'error', L('Invalid role code or name.', '角色代号或名称不符合要求。'));
+    acctShow('roleResult', 'error', L('Create failed: ', '创建失败：') + ((e && e.message) || e));
+  });
+}
+function roleDelete(id, code) {
+  if (!confirm(L('Delete role "' + code + '"? Roles in use cannot be deleted; reassign those users first.', '删除角色“' + code + '”？正在使用的角色删不掉，请先把用这个角色的账号移走。'))) return;
+  aimsFetch('/system/roles/' + id, {method: 'DELETE'}).then(function() {
+    loadRoleMatrix(); permReload();
+  }).catch(function(e) { alert(L('Delete failed: ', '删除失败：') + ((e && e.message) || e)); });
+}
+
+// ===== 删账号（用户页与设置页共用）：不能删自己、不能删最后一个超级管理员，后端同样会拦 =====
+function sysDeleteUser(id, username) {
+  if (!confirm(L('Delete user "' + username + '"? This cannot be undone.', '删除账号“' + username + '”？删除后无法恢复。'))) return;
+  aimsFetch('/system/users/' + id, {method: 'DELETE'}).then(function() {
+    loadSysUsers(); acctReload();
+  }).catch(function(e) { alert(L('Delete failed: ', '删除失败：') + ((e && e.message) || e)); loadSysUsers(); });
+}
+
+// ===== 我的资料：本人改自己的姓名与邮箱（不经过管理员）=====
+function doSaveMyProfile() {
+  var full = document.getElementById('myFull').value.trim();
+  var email = document.getElementById('myEmail').value.trim();
+  var body = {};
+  if (full) body.full_name = full; else body.full_name = null;
+  if (email) body.email = email; else body.email = null;
+  aimsFetch('/auth/me', {method: 'PATCH', body: JSON.stringify(body)}).then(function(me) {
+    _aimsUser = me;
+    acctShow('myProfileResult', 'success', L('Profile saved.', '资料已保存。'));
+    aimsLoadAccountSettings();
+  }).catch(function(e) {
+    acctShow('myProfileResult', 'error', L('Save failed: ', '保存失败：') + ((e && e.message) || e));
+  });
+}
+
+// ===== 页面权限（page.*）：登录用户只能打开被授权的页面；超级管理员 / 还没有角色的老账号不受限 =====
+function aimsPageDenied(id) {
+  if (id === 'sys' || !aimsLoggedIn() || !_aimsUser || !Array.isArray(_aimsUser.pages)) return false;
+  return _aimsUser.pages.indexOf(id) < 0;
+}
+function aimsEnforcePages() {
+  document.querySelectorAll('.nav-btn').forEach(function(b) {
+    var m = /showPage\('(\w+)'/.exec(b.getAttribute('onclick') || '');
+    if (m) b.style.display = aimsPageDenied(m[1]) ? 'none' : '';
+  });
+  var ap = document.querySelector('.page.active');
+  if (ap && aimsPageDenied(ap.id.replace(/^page-/, ''))) {
+    var first = null;
+    document.querySelectorAll('.nav-btn').forEach(function(b) { if (!first && b.style.display !== 'none') first = b; });
+    if (first) first.click();
+  }
+}
+
+// ===== 把“界面登录着谁”告诉后端，托盘菜单据此显示登录状态 / 登录人 / 使用权限 =====
+// 身份只取自令牌（服务端自己解），令牌换新/清除时再报一次；失败无所谓，托盘显示“未获取”。
+var _aimsReported = null;
+function aimsReportUiState() {
+  var tok = aimsTokens().access || '';
+  if (tok === _aimsReported) return;
+  _aimsReported = tok;
+  try {
+    fetch(apiBase() + '/auth/ui-state', {method: 'POST', headers: tok ? {'Authorization': 'Bearer ' + tok} : {}}).catch(function() {});
+  } catch (e) {}
+}
+
+function loadSettings() {
+  var ep = document.getElementById('apiEndpoint');
+  var iv = document.getElementById('refreshInterval');
+  aimsFetch('/system/settings').then(function(rows) {
+    var map = {};
+    (rows || []).forEach(function(s) { if (s && s.key) map[s.key] = s.value; });
+    if (map['ui.api_endpoint']) {
+      if (ep) ep.value = map['ui.api_endpoint'];
+      try { localStorage.setItem('aims_api_endpoint', map['ui.api_endpoint']); } catch (e) {}
+    }
+    if (map['ui.refresh_interval'] != null && map['ui.refresh_interval'] !== '') {
+      if (iv) iv.value = map['ui.refresh_interval'];
+      try { localStorage.setItem('aims_refresh_interval', String(map['ui.refresh_interval'])); } catch (e) {}
+    }
+  }).catch(function() {
+    // 后端连不上：用本机保存的值（端点）与本机保存的间隔，并如实告知。
+    try {
+      var savedEp = localStorage.getItem('aims_api_endpoint');
+      if (savedEp && ep && !ep.value) ep.value = savedEp;
+      var savedIv = localStorage.getItem('aims_refresh_interval');
+      if (savedIv && iv && !iv.value) iv.value = savedIv;
+    } catch (e) {}
+    _settingsShow('warning', t('settingsLoadFailed'));
+  });
+}
+// ===== 角色页：超级管理员重置他人密码 =====
+// 调后端已有的 PATCH /system/users/{id} {password}：按口令策略校验，并让该用户所有会话失效。
+function rpShow(cls, text) {
+  var r = document.getElementById('rpResult');
+  if (r) { r.style.display = 'block'; r.className = 'login-result' + (cls ? ' ' + cls : ''); r.textContent = text; }
+}
+function loadRoleResetUsers() {
+  var sel = document.getElementById('rpUser');
+  if (!sel || !_aimsUser || !_aimsUser.is_superuser) return;
+  aimsFetch('/system/users?limit=200').then(function(rows) {
+    rows = (Array.isArray(rows) ? rows : []).filter(function(u) { return u.id !== _aimsUser.id; });   // 自己的密码走“修改密码”
+    sel.innerHTML = rows.map(function(u) {
+      return '<option value="' + u.id + '">' + escHtml(u.username) + (u.is_active ? '' : ' (' + t('rpDisabled') + ')') + '</option>';
+    }).join('') || '<option value="">' + escHtml(t('rpNoUsers')) + '</option>';
+  }).catch(function(e) { rpShow('error', tf('setErrFailed', e.message || e)); });
+}
+function doResetUserPassword() {
+  var sel = document.getElementById('rpUser');
+  var id = sel && sel.value, name = sel && sel.selectedOptions[0] ? sel.selectedOptions[0].textContent : '';
+  var nw = document.getElementById('rpNew').value, cf = document.getElementById('rpConfirm').value;
+  if (!id) return rpShow('error', t('rpErrPick'));
+  if (!nw || !cf) return rpShow('error', t('pwErrEmpty'));
+  if (nw !== cf) return rpShow('error', t('pwErrMismatch'));
+  if (nw.length < 12) return rpShow('error', tf('pwErrShort', 12));
+  if (!confirm(tf('rpConfirmAsk', name))) return;
+  var btn = document.getElementById('rpBtn'); if (btn) btn.disabled = true;
+  aimsFetch('/system/users/' + id, { method: 'PATCH', body: JSON.stringify({ password: nw }), timeout: 20000 }).then(function() {
+    document.getElementById('rpNew').value = ''; document.getElementById('rpConfirm').value = '';
+    rpShow('success', tf('rpDone', name) + ' ' + L('They must set their own password at next sign-in.', '该用户下次登录时必须先修改密码。'));
+  }).catch(function(e) {
+    var st = e && e.httpStatus;
+    if (st === 403) return rpShow('error', t('rpErrForbidden'));
+    if (st) return rpShow('error', aimsPwServerMsg(st, e.message));
+    rpShow('error', t('loginErrUnreachable'));
+  }).then(function() { if (btn) btn.disabled = false; });
+}
+
 function saveSettings() {
-  var endpoint = document.getElementById('apiEndpoint').value;
+  var endpoint = document.getElementById('apiEndpoint').value.trim();
   var interval = document.getElementById('refreshInterval').value;
-  try { localStorage.setItem('aims_api_endpoint', endpoint); } catch (e) {}
-  document.getElementById('saveResult').innerHTML = '<div class="alert-item alert-normal">Settings saved!<br>API: '+endpoint+'<br>Refresh: '+interval+'s</div>';
+  var n = Number(interval);
+  if (!/^\d+$/.test(String(interval).trim()) || n < 5 || n > 3600) {
+    _settingsShow('critical', t('settingsInvalidInterval'));
+    return;
+  }
+  _settingsShow('', t('settingsSaving'));
+  function put(key, value) {
+    return aimsFetch('/system/settings/' + encodeURIComponent(key), {
+      method: 'PUT', body: JSON.stringify({ value: String(value) }), timeout: 15000
+    });
+  }
+  Promise.all([put('ui.api_endpoint', endpoint), put('ui.refresh_interval', String(n))]).then(function() {
+    try {
+      localStorage.setItem('aims_api_endpoint', endpoint);
+      localStorage.setItem('aims_refresh_interval', String(n));
+    } catch (e) {}
+    _settingsShow('', tf('settingsSavedDetail', endpoint || defaultApiBase(), n));
+  }).catch(function(e) {
+    var st = e && e.httpStatus;
+    if (st === 403) { _settingsShow('critical', t('settingsNeedAdmin')); return; }
+    if (st) { _settingsShow('critical', t('settingsSaveFailed')); return; }
+    // 没连上后端：仍把值写到本机，页面能继续用，并如实告知。
+    try {
+      localStorage.setItem('aims_api_endpoint', endpoint);
+      localStorage.setItem('aims_refresh_interval', String(n));
+    } catch (e2) {}
+    _settingsShow('warning', t('settingsSavedLocal'));
+  });
 }
 
 // ===== Data Analysis Page =====
@@ -4567,7 +5594,7 @@ function setupDAPage() {
     document.getElementById('daPreviewTable').innerHTML = '';
     document.getElementById('daStats').innerHTML = '';
     document.getElementById('daSchema').innerHTML = '';
-    document.getElementById('daChart').innerHTML = '<div class="da-empty">Import file and select curves to display here.</div>';
+    document.getElementById('daChart').innerHTML = '<div class="da-empty"></div>';
     setStatus('Reset. Import Excel.', 'da-warn');
     updateDAMetrics();
   });
@@ -4593,10 +5620,8 @@ function setStatus(msg, cls) {
 
 function updateDAMetrics() {
   document.getElementById('daMFile').textContent = daState.fname ? (currentLang==='zh'?'已导入':'Imported') : (currentLang==='zh'?'未导入':'Not Imported');
-  document.getElementById('daMFileSub').textContent = daState.fname || (currentLang==='zh'?'请选择Excel':'Please select Excel');
   document.getElementById('daMRows').textContent = daState.rows.length;
   document.getElementById('daMCols').textContent = daState.hdrs.length;
-  document.getElementById('daMNumCols').textContent = (currentLang==='zh'?'数值列':'Numeric') + ' ' + daState.numCols.length;
   document.getElementById('daMFiltered').textContent = daState.filtered.length || 0;
 }
 
@@ -4659,7 +5684,6 @@ function generateDADemoData() {
   xSelect.innerHTML = headers.map(function(h){return '<option value="'+h+'">'+h+'</option>';}).join('');
   xSelect.value = 'Time';
   
-  document.getElementById('daSheetHint').textContent = rows.length + ' rows, ' + headers.length + ' cols; ' + daState.numCols.length + ' numeric';
   
   renderYChecks(daState.numCols.slice(0, 5));
   
@@ -4952,6 +5976,22 @@ function exportDA_CSV() {
 // ==================== Template Center 模板中心（计划书第十二章） ====================
 var tplState = {templates: [], categories: [], currentCategory: '', currentId: null, editingId: null, lastPreview: null};
 
+// 分类名是服务端的中文常量（接口与数据库里存的就是它，也是后端判断“怎么应用”的键），
+// 所以只在显示时翻译，传给后端、写进 data-cat / option value 的永远是原值。
+var TPL_CAT_EN = {
+  '仪表管理': 'Instrument Management', '在线分析仪': 'Online Analyzers', '气相色谱仪': 'Gas Chromatographs',
+  '设备台账': 'Equipment Ledger', 'TAG 点位': 'TAG Points', '通信配置': 'Communication Config',
+  '报警配置': 'Alarm Config', '维护管理': 'Maintenance', '资产管理': 'Asset Management',
+  '实验室数据': 'Lab Data', '数据导入': 'Data Import', '数据导出': 'Data Export',
+  '报表': 'Reports', '图表': 'Charts', 'AI 分析': 'AI Analysis', 'RAG 知识库': 'RAG Knowledge Base',
+  '设备诊断': 'Device Diagnosis', '数据库查询': 'Database Queries', '工作流程': 'Workflows',
+  '系统配置': 'System Config'
+};
+function tplCatLabel(c) { return (currentLang === 'en' && TPL_CAT_EN[c]) ? TPL_CAT_EN[c] : c; }
+function tplCatOption(c, selected) {
+  return '<option value="' + tplEsc(c) + '"' + (selected ? ' selected' : '') + '>' + tplEsc(tplCatLabel(c)) + '</option>';
+}
+
 function tplOnEnter() { tplLoadCategories(); tplLoad(); }
 
 function tplSwitchTab(tab, btn) {
@@ -4968,9 +6008,9 @@ function tplLoadCategories() {
   aimsFetch('/templates/categories').then(function(d){
     tplState.categories = d.categories || [];
     var html = '<div style="border:1px solid #eee;border-radius:8px;overflow:hidden">';
-    html += '<div class="tpl-cat tpl-cat-active" data-cat="" onclick="tplPickCategory(\'\')">' + L('All Templates', '全部模板') + '</div>';
+    html += '<div class="tpl-cat' + (tplState.currentCategory ? '' : ' tpl-cat-active') + '" data-cat="" onclick="tplPickCategory(\'\')">' + L('All Templates', '全部模板') + '</div>';
     tplState.categories.forEach(function(c){
-      html += '<div class="tpl-cat" data-cat="' + c + '" onclick="tplPickCategory(\'' + c + '\')">' + c + '</div>';
+      html += '<div class="tpl-cat' + (c === tplState.currentCategory ? ' tpl-cat-active' : '') + '" data-cat="' + tplEsc(c) + '" onclick="tplPickCategory(\'' + c + '\')">' + tplEsc(tplCatLabel(c)) + '</div>';
     });
     html += '</div>';
     if (box) box.innerHTML = html;
@@ -5010,7 +6050,7 @@ function tplLoad() {
       return '<div class="card" style="cursor:pointer" onclick="tplShowDetail(' + t.id + ')">' +
         '<div style="display:flex;justify-content:space-between;align-items:center">' +
         '<b style="font-size:14px">' + tplEsc(t.name) + '</b>' + srcBadge + '</div>' +
-        '<div style="color:#888;font-size:12px;margin:6px 0">' + tplEsc(t.category) + ' · v' + t.current_version +
+        '<div style="color:#888;font-size:12px;margin:6px 0">' + tplEsc(tplCatLabel(t.category)) + ' · v' + t.current_version +
         (t.is_default ? ' · <span style="color:#fa8c16">' + L('Default', '默认') + '</span>' : '') +
         (t.is_favorite ? ' · <span style="color:#faad14">★</span>' : '') + '</div>' +
         '<div style="font-size:12px;color:#666;height:32px;overflow:hidden">' + tplEsc(t.description || '') + '</div>' +
@@ -5049,7 +6089,7 @@ function tplShowDetail(id) {
       '<button class="btn btn-warning" onclick="tplToggleFav(' + t.id + ')">' + L('Favorite', '收藏') + '</button> ' +
       '<button class="btn btn-danger" onclick="tplDelete(' + t.id + ')">' + L('Delete', '删除') + '</button>' +
       '</div></div>' +
-      '<div style="font-size:12px;color:#666;margin-bottom:8px">' + L('Category: ', '分类：') + tplEsc(t.category) + L(' · Version: v', ' · 版本：v') + t.current_version +
+      '<div style="font-size:12px;color:#666;margin-bottom:8px">' + L('Category: ', '分类：') + tplEsc(tplCatLabel(t.category)) + L(' · Version: v', ' · 版本：v') + t.current_version +
       L(' · Source: ', ' · 来源：') + t.source + L(' · Author: ', ' · 作者：') + tplEsc(t.author || '-') + ' · UID: <code>' + tplEsc(t.template_uid) + '</code></div>' +
       '<div style="font-size:13px;margin-bottom:8px">' + tplEsc(t.description || L('(no description)', '（无描述）')) + '</div>' +
       '<details style="margin:10px 0"><summary style="cursor:pointer;font-weight:bold">' + L('Version history (click to expand / roll back)', '版本历史（点击展开/回退）') + '</summary><div id="tplVersions" style="margin-top:8px">' + L('Loading…', '加载中…') + '</div></details>' +
@@ -5155,7 +6195,7 @@ function tplShowCreate() {
   document.getElementById('tplChangelog').value = '';
   document.getElementById('tplContent').value = '{\n  "devices": [\n    {"device_code": "DEV-{n}", "name": "设备 {n}", "protocol": "Modbus TCP",\n     "components": [{"component_name": "主测量值", "unit": "%"}]}\n  ],\n  "count": 1\n}';
   var sel = document.getElementById('tplCategory');
-  sel.innerHTML = tplState.categories.map(function(c){ return '<option>' + c + '</option>'; }).join('') || '<option>设备台账</option>';
+  sel.innerHTML = tplState.categories.map(function(c){ return tplCatOption(c, false); }).join('') || tplCatOption('设备台账', false);
   document.getElementById('tplEditor').style.display = 'block';
 }
 
@@ -5166,7 +6206,7 @@ function tplEdit(id) {
     document.getElementById('tplEditorTitle').textContent = L('Edit template #', '编辑模板 #') + id + L(' (saving creates v', '（保存将生成 v') + (t.current_version + 1) + L(')', '）');
     document.getElementById('tplName').value = t.name;
     var sel = document.getElementById('tplCategory');
-    sel.innerHTML = tplState.categories.map(function(c){ return '<option' + (c === t.category ? ' selected' : '') + '>' + c + '</option>'; }).join('');
+    sel.innerHTML = tplState.categories.map(function(c){ return tplCatOption(c, c === t.category); }).join('');
     if (t.source === 'system') sel.setAttribute('disabled','disabled'); else sel.removeAttribute('disabled');
     document.getElementById('tplAuthor').value = t.author || '';
     document.getElementById('tplTags').value = (t.tags || []).join(', ');
@@ -5242,7 +6282,7 @@ function tplRenderPreview(data, files) {
     var missing = (r.missing_dependencies || []).join(', ');
     html += '<div style="padding:10px;border:1px solid #d9d9d9;background:#fff;border-radius:6px;margin-bottom:8px">' +
       '<b>' + tplEsc(r.filename) + '</b> ✔ ' + L('Structure check passed', '结构检查通过') +
-      '<div style="font-size:12px;color:#555;margin:6px 0">' + L('Name: ', '名称：') + tplEsc(m.name) + L(' · Category: ', ' · 分类：') + tplEsc(m.category) +
+      '<div style="font-size:12px;color:#555;margin:6px 0">' + L('Name: ', '名称：') + tplEsc(m.name) + L(' · Category: ', ' · 分类：') + tplEsc(tplCatLabel(m.category)) +
       L(' · Package version: ', ' · 包版本：') + tplEsc(m.version) + L(' · Min compatible: ', ' · 最低兼容：') + tplEsc(m.min_aims_version) + L(' · Author: ', ' · 作者：') + tplEsc(m.author || '-') + '</div>' +
       '<div style="font-size:12px;color:#555">' + L('Contents: ', '内容：') + JSON.stringify(r.summary || {}) + '</div>' +
       (conflicts ? '<div style="font-size:12px;color:#fa8c16;margin-top:4px">' + L('Version conflicts:', '版本冲突：') + '<ul style="margin:4px 0">' + conflicts + '</ul></div>' : '') +
@@ -5382,10 +6422,12 @@ function loadSysUsers() {
   aimsFetch('/system/users?limit=200').then(function(rows) {
     if (!Array.isArray(rows) || !rows.length) { tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:#999">' + L('No users', '无用户') + '</td></tr>'; return; }
     tbody.innerHTML = rows.map(function(u) {
+      var self = _aimsUser && u.id === _aimsUser.id;
       return '<tr><td>' + u.id + '</td><td>' + escHtml(u.username) + '</td><td>' + escHtml(u.email || '-') + '</td>'
         + '<td>' + (u.is_active ? '<span class="tag tg">' + L('Enabled', '启用') + '</span>' : '<span class="tag to">' + L('Disabled', '停用') + '</span>') + '</td>'
         + '<td>' + (u.is_superuser ? L('Yes', '是') : L('No', '否')) + '</td>'
-        + '<td>' + (u.is_active ? '<button class="btn btn-gray" style="padding:2px 8px" onclick="sysToggleUser(' + u.id + ',false)">' + L('Disable', '停用') + '</button>' : '<button class="btn btn-gray" style="padding:2px 8px" onclick="sysToggleUser(' + u.id + ',true)">' + L('Enable', '启用') + '</button>') + '</td></tr>';
+        + '<td>' + (u.is_active ? '<button class="btn btn-gray" style="padding:2px 8px" onclick="sysToggleUser(' + u.id + ',false)">' + L('Disable', '停用') + '</button>' : '<button class="btn btn-gray" style="padding:2px 8px" onclick="sysToggleUser(' + u.id + ',true)">' + L('Enable', '启用') + '</button>')
+        + (self ? '' : ' <button class="btn btn-gray" style="padding:2px 8px" onclick="sysDeleteUser(' + u.id + ',\'' + escHtml(u.username) + '\')">' + L('Delete', '删除') + '</button>') + '</td></tr>';
     }).join('');
   }).catch(function(e) { tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:#f5222d">' + L('Load failed: ', '加载失败：') + escHtml(e.message || e) + '</td></tr>'; });
 }

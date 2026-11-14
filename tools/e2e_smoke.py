@@ -1,20 +1,20 @@
 """AIMS 端到端功能检测（对着一个真实运行的后端，走完整业务流程）。
 
-覆盖：认证/改密/角色权限、设备与 TAG、网关与采集入库、测量与导入、报警链路、AI、维护/工单/备件、
+覆盖：认证/角色权限、设备与 TAG、网关与采集入库、测量与导入、报警链路、AI、维护/工单/备件、
 资产、实验室、知识库、数据分析、云数据源(SSRF 防护)、模板中心全流程(导入导出/版本/回退/应用)、仪表盘。
 
-⚠ 只能对一次性的测试实例运行：它会创建 admin 之外的测试用户、设备、工单等数据，
-  并临时修改 admin 密码（结束时改回）。不要对生产库运行。
+⚠ 只能对一次性的测试实例运行：它会创建测试用户、设备、工单等数据，
+  并（仅当 AIMS_E2E_CHANGE_PASSWORD=1 时）临时修改 admin 密码再改回。不要对生产库运行。
 
-用法（先用一个全新的空库启动后端，并设 RATE_LIMIT_ENABLED=false、BOOTSTRAP_ADMIN_*）：
-    AIMS_BASE=http://127.0.0.1:8000 AIMS_ADMIN_USER=admin AIMS_ADMIN_PASS=... python tools/e2e_smoke.py
+用法（先用一个全新的空库启动后端，并设 RATE_LIMIT_ENABLED=false）：
+    AIMS_BASE=http://127.0.0.1:8000 AIMS_ADMIN_USER=admin AIMS_ADMIN_PASS=admin123 python tools/e2e_smoke.py
 退出码：全部通过为 0，有失败为 1。
 """
 import os
 import httpx, json, io, time, csv, sys, traceback
 B=os.environ.get('AIMS_BASE','http://127.0.0.1:8000').rstrip('/')+'/api/v1'
 ADM_U=os.environ.get('AIMS_ADMIN_USER','admin'); ADM_P=os.environ['AIMS_ADMIN_PASS']
-TMP_P=ADM_P+'-tmp9'
+TMP_P=os.environ.get('AIMS_E2E_TMP_PASS','E2e-Tmp-Pass!2026')
 c=httpx.Client(timeout=120)
 R=[]  # (module, name, ok, detail)
 def rec(mod,name,ok,detail=''):
@@ -34,13 +34,20 @@ def J(r):
 # ---------------- AUTH
 r=c.post(B+'/auth/login',json={'username':ADM_U,'password':ADM_P}); tok=r.json(); H={'Authorization':'Bearer '+tok['access_token']}
 rec('auth','login',r.status_code==200)
+if tok.get('must_change_password'):
+    # 默认账号(admin/admin123)首次登录必须先改密码：测试实例是一次性的，直接改成临时强口令继续
+    r2=c.post(B+'/auth/change-password',headers=H,json={'current_password':ADM_P,'new_password':TMP_P})
+    rec('auth','forced first-login password change',r2.status_code==200,r2.text[:120])
+    tok=r2.json(); ADM_P=TMP_P; H={'Authorization':'Bearer '+tok['access_token']}
 call('auth','login wrong password','POST','/auth/login',401,json={'username':'admin','password':'nope'},auth=False)
 call('auth','no token -> 401','GET','/devices',(401,403),auth=False)
 rr=call('auth','refresh','POST','/auth/refresh',200,json={'refresh_token':tok['refresh_token']},auth=False)
-call('auth','change password','POST','/auth/change-password',(200,204),json={'current_password':ADM_P,'new_password':TMP_P})
-r=c.post(B+'/auth/login',json={'username':ADM_U,'password':TMP_P}); rec('auth','login with new password',r.status_code==200)
-H={'Authorization':'Bearer '+r.json()['access_token']}
-call('auth','change password back','POST','/auth/change-password',(200,204),json={'current_password':TMP_P,'new_password':ADM_P})
+# 临时改密码再改回：默认 admin/admin123 过不了密码策略，改不回去，所以默认跳过；用强口令的实例可设 AIMS_E2E_CHANGE_PASSWORD=1
+if os.environ.get('AIMS_E2E_CHANGE_PASSWORD')=='1':
+    call('auth','change password','POST','/auth/change-password',(200,204),json={'current_password':ADM_P,'new_password':TMP_P})
+    r=c.post(B+'/auth/login',json={'username':ADM_U,'password':TMP_P}); rec('auth','login with new password',r.status_code==200)
+    H={'Authorization':'Bearer '+r.json()['access_token']}
+    call('auth','change password back','POST','/auth/change-password',(200,204),json={'current_password':TMP_P,'new_password':ADM_P})
 r=c.post(B+'/auth/login',json={'username':ADM_U,'password':ADM_P}); tok=r.json(); H={'Authorization':'Bearer '+tok['access_token']}
 # ---------------- SYSTEM users/roles
 u=call('system','create operator user','POST','/system/users',(200,201),json={'username':'op1','password':'Op3rator-Pass!2026','full_name':'Op One','email':'op1@example.com'})

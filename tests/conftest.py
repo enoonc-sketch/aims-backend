@@ -6,22 +6,22 @@ from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, event, text
 from sqlalchemy.orm import sessionmaker
 
-# Prefer SQLite for local/CI tests; override with TEST_DATABASE_URL for Postgres
+# 默认 SQLite；跑 PostgreSQL：TEST_DATABASE_URL=postgresql+psycopg2://user@host/db pytest（库需已装 pgvector）
 # SECRET_KEY has no default in the app; tests inject a throw-away random one.
 import secrets as _secrets  # noqa: E402
 
 os.environ.setdefault("SECRET_KEY", _secrets.token_urlsafe(48))
 os.environ.setdefault("APP_ENV", "development")
 os.environ["CORS_ORIGINS"] = "https://ui.example.test"
-os.environ.setdefault("DATABASE_URL", "sqlite:///:memory:")
+# 测试库只由 TEST_DATABASE_URL 决定（默认 SQLite 内存库），并强制让应用自身的 DATABASE_URL 跟随它：
+#  1) 切到 PostgreSQL 时只需设一个变量，夹具和应用代码（直接用 SessionLocal 的地方）连的是同一个库；
+#  2) 开发机环境里即使有指向真实库的 DATABASE_URL，测试也不会碰到它（teardown 会 drop_all）。
+os.environ["DATABASE_URL"] = os.environ.get("TEST_DATABASE_URL", "sqlite:///:memory:")
 os.environ.setdefault("AUTO_INIT_DB", "false")
 # 限流在测试里默认关闭：pytest 所有请求来自同一个 TestClient IP，
 # 开启会命中 429 而不是被测功能本身。专门的限流测试自行打开。
 os.environ.setdefault("RATE_LIMIT_ENABLED", "false")
-os.environ.setdefault(
-    "TEST_DATABASE_URL",
-    os.environ.get("TEST_DATABASE_URL", "sqlite:///:memory:"),
-)
+os.environ["TEST_DATABASE_URL"] = os.environ["DATABASE_URL"]
 
 # Clear settings cache so DATABASE_URL is picked up
 from app.core import config as config_mod  # noqa: E402

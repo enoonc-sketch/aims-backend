@@ -108,6 +108,7 @@ def _ensure_sqlite_measurement_import_columns(engine) -> None:
 # 闭环(报警->AI诊断->工单->维修结果->AI反馈)新增的列。SQLite(独立 EXE)没有 Alembic,
 # create_all() 不会给已存在的表加列, 所以对旧库在这里补。新表(ai_diagnosis_feedback)由 create_all 建。
 _SQLITE_CHAIN_COLUMNS: dict[str, dict[str, str]] = {
+    "users": {"must_change_password": "BOOLEAN NOT NULL DEFAULT 0"},
     "alarms": {"alarm_type": "VARCHAR(20) NOT NULL DEFAULT 'process'"},
     "ai_diagnoses": {
         "alarm_id": "INTEGER REFERENCES alarms(id) ON DELETE SET NULL",
@@ -188,9 +189,10 @@ def _bootstrap_admin(db: Session) -> None:
     """Create the FIRST administrator, only if the users table is empty AND the
     credentials were injected from outside (BOOTSTRAP_ADMIN_USERNAME / _PASSWORD).
 
-    There is no built-in account and no default password. Without injected
-    credentials nobody can log in until an operator runs
-    `python -m app.cli create-admin`."""
+    Without injected credentials, outside production, the development administrator
+    (admin / admin123 by default, see ALLOW_DEV_ADMIN) is created so a fresh instance can be
+    logged into. In production there is no built-in account: the operator must inject
+    BOOTSTRAP_ADMIN_* or run `python -m app.cli create-admin`."""
     from app.core.security import hash_password, validate_password_strength
     from app.models.system import Role, User, UserRole
 
@@ -219,7 +221,8 @@ def _bootstrap_admin(db: Session) -> None:
             raise RuntimeError(f"BOOTSTRAP_ADMIN_PASSWORD rejected: {e}") from e
 
     admin = User(username=username, hashed_password=hash_password(password),
-                 full_name="System Administrator", is_superuser=True)
+                 full_name="System Administrator", is_superuser=True,
+                 must_change_password=bool(dev_admin and settings.DEV_ADMIN_FORCE_PASSWORD_CHANGE))
     db.add(admin)
     db.flush()
     role = db.scalar(select(Role).where(Role.code == "admin"))
@@ -478,7 +481,8 @@ def _ensure_indexes(engine) -> None:
 
 
 _LEGACY_DEMO_CREDENTIALS = (
-    ("admin", "admin123"), ("system", "sys123"), ("operator", "op123"), ("maintainer", "maint123"),
+    ("admin", "admin123"), ("admin", "admin"),   # 开发管理员（admin/admin123，旧版 admin/admin）只在 ALLOW_DEV_ADMIN 放行时才保留（见下）
+    ("system", "sys123"), ("operator", "op123"), ("maintainer", "maint123"),
 )
 
 
@@ -497,8 +501,8 @@ def _disable_legacy_demo_accounts(db: Session) -> int:
     disabled = 0
     for username, password in _LEGACY_DEMO_CREDENTIALS:
         if (settings.dev_admin_allowed and username == (settings.DEV_ADMIN_USERNAME.strip() or "admin")
-                and password == settings.DEV_ADMIN_PASSWORD):
-            continue  # the explicitly allowed development admin keeps working
+                and password in (settings.DEV_ADMIN_PASSWORD, "admin", "admin123")):
+            continue  # the explicitly allowed development admin keeps working (old admin/admin included)
         user = db.scalar(select(User).where(User.username == username))
         if user is not None and verify_password(password, user.hashed_password):
             user.is_active = False
@@ -554,6 +558,20 @@ def _seed_permissions(db: Session) -> None:
     for code,name,module in items:
         p=db.scalar(select(Permission).where(Permission.code==code))
         if p is None: db.add(Permission(code=code,name=name,module=module))
+    db.flush()
+    # 页面权限 page.<id>：新建时授予所有现有角色（升级前谁都能开所有页面，行为不变），
+    # 之后由管理员在「系统设置 → 权限设置」里收紧；已存在的不再重复授予，免得覆盖管理员的修改。
+    from app.services.access import PAGE_IDS, PAGE_PERM_PREFIX
+    new_pages = []
+    for pid in PAGE_IDS:
+        code = PAGE_PERM_PREFIX + pid
+        if db.scalar(select(Permission).where(Permission.code == code)) is None:
+            perm = Permission(code=code, name=f"Page: {pid}", module="page")
+            db.add(perm); new_pages.append(perm)
+    db.flush()
+    for perm in new_pages:
+        for role in db.scalars(select(Role)).all():
+            db.add(RolePermission(role_id=role.id, permission_id=perm.id))
     db.flush()
     admin=db.scalar(select(Role).where(Role.code=="admin"))
     if admin:

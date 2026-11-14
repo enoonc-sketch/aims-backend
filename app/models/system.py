@@ -2,7 +2,7 @@
 from datetime import datetime, timezone
 
 from sqlalchemy import (
-    Boolean, Column, DateTime, ForeignKey, Index, Integer, String, Text, JSON, func
+    Boolean, Column, DateTime, ForeignKey, Index, Integer, String, Text, JSON, false, func
 )
 from sqlalchemy.orm import relationship
 
@@ -29,6 +29,8 @@ class User(Base):
     email = Column(String(150))
     is_active = Column(Boolean, nullable=False, default=True)
     is_superuser = Column(Boolean, nullable=False, default=False)
+    # 用默认口令（admin/admin123）建出来的账号：必须先改密码才能用其他接口，改完清零。
+    must_change_password = Column(Boolean, nullable=False, default=False, server_default=false())
     last_login_at = Column(DateTime(timezone=True))
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now())

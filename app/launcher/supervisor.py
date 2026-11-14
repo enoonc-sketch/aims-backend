@@ -15,6 +15,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import secrets
 import signal
 import socket
 import subprocess
@@ -88,6 +89,8 @@ class Supervisor:
         self.started_backend_here = False
         self._stop_lock = threading.Lock()
         self._stopping = False
+        # 托盘读取“界面登录状态”用的口令：随机生成，只经环境变量交给本次拉起的后端
+        self.launcher_token = secrets.token_urlsafe(24)
         self.state = {
             "database": ServiceState("database"),
             "ai": ServiceState("ai"),
@@ -211,6 +214,7 @@ class Supervisor:
         env.update({k: str(v) for k, v in self.env.items() if not k.startswith("#")})
         env["AIMS_ROOT"] = str(self.root)
         env["AIMS_LAUNCHED_BY"] = "launcher"
+        env["AIMS_LAUNCHER_TOKEN"] = self.launcher_token
         # 让后端在启动器意外消失时自行退出，避免留下占端口的孤儿进程
         env["AIMS_PARENT_PID"] = str(os.getpid())
         # 打开界面由启动器负责（带托盘、只开一次），后端自己不要再开一个浏览器

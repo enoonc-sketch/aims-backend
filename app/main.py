@@ -3,7 +3,8 @@ import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
+from app.api.deps import enforce_password_change
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -155,6 +156,7 @@ app = FastAPI(
     description="Industrial Analyzer Smart O&M Platform — backend API",
     version=APP_VERSION,
     lifespan=lifespan,
+    dependencies=[Depends(enforce_password_change)],   # 默认口令账号先改密码，见 app/api/deps.py
     # API docs are off in production unless ENABLE_DOCS=true
     docs_url="/docs" if settings.docs_enabled else None,
     redoc_url=None,

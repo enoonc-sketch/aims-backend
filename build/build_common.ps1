@@ -345,8 +345,6 @@ function Build-Launcher {
         '--name', 'AIMS', (Join-Path $script:RepoRoot 'aims_launcher.py'),
         '--icon', (Join-Path $script:RepoRoot 'assets\aims.ico'),
         '--windowed', '--noupx',
-        '--hidden-import', 'pystray._win32',
-        '--hidden-import', 'PIL.ImageDraw',
         '--collect-submodules', 'app.launcher',
         # AIMS Desktop 原生窗口（pywebview → Windows 上经 pythonnet 驱动 WebView2）
         '--collect-submodules', 'webview',

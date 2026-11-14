@@ -39,6 +39,7 @@ from app.schemas.ai import (
     CoreDeleteResult,
     PyPackageInstallResult,
     PyPackageOut,
+    NativeEngineOut,
 )
 from app.services import py_packages, studio_data
 
@@ -455,12 +456,20 @@ def engine_info():
         installed = False
 
     hw = get_system_info()
+    try:
+        from app.services import engine_installer
+
+        native_engines = engine_installer.list_engines()
+    except Exception:
+        native_engines = []
     return {
         "engine": "llama.cpp (llama-cpp-python)",
         "version": engine_version,
         "path": engine_path,
         "arch": _platform.machine(),
         "installed": installed,
+        "native_engines": native_engines,
+        "native_installed": [e for e in native_engines if e.get("installed")],
         "status": llm_local_status_snapshot(),
         "params": {
             "ctx": settings.AI_LOCAL_LLM_CTX,
@@ -647,4 +656,53 @@ def install_py_package(package_id: str, user: User = Depends(get_current_superus
     try:
         return py_packages.install_package(package_id)
     except py_packages.PackageInstallError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+# ============================================================
+# Standalone native engine installer (AI Center -> Model Download)
+#
+# The /ai/packages pip path above is refused inside a frozen EXE, so on the
+# installed Windows build the Model Download page's engine buttons could
+# never work. These endpoints download official prebuilt llama.cpp Windows
+# binaries (llama-server.exe) from GitHub releases into the writable models
+# directory — no pip, no rebuild — so they work from the packaged EXE too.
+# Superuser-only: downloading and executing a ~700 MB binary is an admin
+# action, same as the pip installer above.
+# ============================================================
+@router.get("/engines", response_model=list[NativeEngineOut])
+def list_native_engines(user: User = Depends(get_current_user)):
+    from app.services import engine_installer
+
+    return engine_installer.list_engines()
+
+
+@router.post("/engines/{engine_id}/install", response_model=NativeEngineOut)
+def install_native_engine(engine_id: str, user: User = Depends(get_current_superuser)):
+    from app.services import engine_installer
+
+    try:
+        return engine_installer.install_engine(engine_id)
+    except engine_installer.EngineInstallError as e:
+        msg = str(e)
+        # Download / upstream failures are a bad-gateway situation, not a
+        # bad request — but keep the distinction visible in the message.
+        if msg.startswith(("下载", "在 llama.cpp", "引擎包")):
+            raise HTTPException(status_code=502, detail=msg)
+        raise HTTPException(status_code=400, detail=msg)
+
+
+@router.delete("/engines/{engine_id}", response_model=dict)
+def uninstall_native_engine(
+    engine_id: str,
+    confirm: bool = Query(False, description="必须显式传 confirm=true 才执行卸载"),
+    user: User = Depends(get_current_superuser),
+):
+    from app.services import engine_installer
+
+    if not confirm:
+        raise HTTPException(status_code=400, detail="卸载需显式传 confirm=true")
+    try:
+        return engine_installer.uninstall_engine(engine_id)
+    except engine_installer.EngineInstallError as e:
         raise HTTPException(status_code=400, detail=str(e))

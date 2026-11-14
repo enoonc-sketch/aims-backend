@@ -230,15 +230,15 @@ def provision(*, root: Path | None = None, mode: str = "auto", pg_port: int | No
         engine.dispose()
 
     # 6b ---- 首次登录凭据 ----------------------------------------------------
-    # 首个管理员是 provision 随机生成口令创建的（secrets.json 里的 JSON 人读不了），
-    # 必须同步给用户一份可读凭据，否则用户只能拿 admin/admin 反复试错。
-    if BOOTSTRAP_ADMIN_CREATED:
+    # 全新安装的默认管理员是 admin / admin123（实施人员用 --admin-password 自定义时为自定义值）。
+    # 写一份人能直接打开的凭据文件（开始菜单、安装完成页都链到它），告诉用户登录后去改密码。
+    if _bootstrap_admin_created():
         creds_file = conf.write_first_login_credentials(
             layout, username=admin_username, password=secrets["ADMIN_PASSWORD"],
             api_port=api_port)
         report["admin_credentials_file"] = str(creds_file)
         say(f"  [admin] 首次登录凭据已写入：{creds_file}")
-        say("          （用户名与初始密码见该文件；首次登录后请立即修改密码）")
+        say("          （首次登录后请在「系统设置 → 修改密码」中修改；凭据见 first-login.txt）")
 
     # 7 ---- AI engine -------------------------------------------------------
     # 内置模型随安装包放在只读的程序目录；先落到可写模型目录，再做登记，
@@ -295,6 +295,19 @@ def provision(*, root: Path | None = None, mode: str = "auto", pg_port: int | No
                     "vector": bool(ext.get("vector"))}
     report["ok"] = True
     return report
+
+
+def _bootstrap_admin_created() -> bool:
+    """这次 init_db() 是不是新建了首个管理员。
+
+    必须在 init_db() 跑完之后**读模块属性**。以前写成
+    `from app.db.init_db import BOOTSTRAP_ADMIN_CREATED`：导入那一刻的值是 False，
+    之后 init_db() 把模块里的标志改成 True，provision 里的副本不会跟着变——于是
+    first-login.txt 在安装版里从来没有被写出来。
+    """
+    from app.db import init_db as init_db_mod
+
+    return bool(init_db_mod.BOOTSTRAP_ADMIN_CREATED)
 
 
 def _apply_env(values: dict[str, str]) -> None:

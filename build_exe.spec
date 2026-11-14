@@ -186,9 +186,6 @@ hiddenimports += [
     'psycopg2',
     'psycopg2.extensions',
     'pgvector.sqlalchemy',
-    'pystray',
-    'PIL.Image',
-    'PIL.ImageDraw',
 ]
 
 a = Analysis(

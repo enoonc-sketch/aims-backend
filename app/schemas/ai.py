@@ -180,6 +180,30 @@ class PyPackageInstallResult(BaseModel):
     log_tail: str
 
 
+# ---------- Standalone native engine installer (AI Center -> Model Download) ----------
+# Complements /ai/packages (pip installs, refused inside a frozen EXE): these
+# are official prebuilt llama.cpp Windows binaries downloaded from GitHub
+# releases into <MODELS_DIR>/engines/ — installable from the packaged EXE.
+class NativeEngineOut(BaseModel):
+    id: str
+    name: str
+    name_en: str
+    description: str
+    description_en: str
+    requires: str
+    download_size_hint: Optional[int] = None
+    installed: bool = False
+    tag: Optional[str] = None
+    asset: Optional[str] = None
+    sha256: Optional[str] = None
+    size_bytes: Optional[int] = None
+    installed_at: Optional[str] = None
+    server_path: Optional[str] = None
+    verify_ok: Optional[bool] = None
+    verify_error: Optional[str] = None
+    version: Optional[str] = None
+
+
 class CoreDeleteResult(BaseModel):
     """模型删除结果（阶段 3-5 补齐：模型生命周期管理，总方案 7.3/7.4）。"""
 

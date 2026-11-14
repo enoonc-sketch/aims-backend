@@ -393,7 +393,7 @@ def build_parser() -> argparse.ArgumentParser:
         sp.add_argument("--pg-port", type=int, default=None, help="PostgreSQL 端口（默认 55432，被占用则自动顺延）")
         sp.add_argument("--api-port", type=int, default=8000, help="应用端口（写入配置）")
         sp.add_argument("--admin-user", default="admin", help="首个管理员用户名")
-        sp.add_argument("--admin-password", default=None, help="首个管理员密码（默认自动生成，见 secrets.json）")
+        sp.add_argument("--admin-password", default=None, help="首个管理员密码（默认 admin123；自定义须满足口令强度策略）")
         sp.add_argument("--mode", choices=["auto", "service", "process"], default="auto",
                         help="PostgreSQL 运行方式：service=Windows 服务，process=随程序启动")
         sp.add_argument("--no-service", action="store_true", help="不注册 Windows 服务")

@@ -82,3 +82,17 @@ def test_i18n_pairs_are_wellformed():
         assert re.search(r"[\u4e00-\u9fff]", zh), f"中文侧没有中文：{p}"
         assert seen_en.setdefault(en, zh) == zh, f"英文键重复且译文不同：{en!r}"
         assert seen_zh.setdefault(zh, en) == en, f"中文键重复且译文不同：{zh!r}"
+
+
+def test_template_category_names_all_have_english_labels():
+    """模板分类名是服务端的中文常量，前端只在显示层翻译；后端新增分类时这里会提醒补词条。"""
+    from app.services.template_center import CATEGORIES
+
+    m = re.search(r"var TPL_CAT_EN = \{(.*?)\n\};", HTML, re.S)
+    assert m, "找不到 TPL_CAT_EN"
+    keys = set(re.findall(r"'([^']+)':\s*'", m.group(1)))
+    missing = [c for c in CATEGORIES if c not in keys]
+    assert not missing, f"这些模板分类没有英文显示名：{missing}"
+    # 传给后端的值必须仍是中文原值：下拉用 value 属性，分类栏用 data-cat
+    assert "'<option value=\"' + tplEsc(c)" in HTML
+    assert "' data-cat=\"' + tplEsc(c)" in HTML or 'data-cat="\' + tplEsc(c)' in HTML

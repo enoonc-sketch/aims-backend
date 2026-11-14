@@ -16,7 +16,7 @@
 ;  * 覆盖升级前自动做数据库备份 + 保留旧程序副本（rollback\<版本>），
 ;    升级后自检不通过时自动回滚，回到安装前的状态。
 ;
-;  编译：ISCC.exe /DAppVersion=1.0.4 installer\AIMS.iss
+;  编译：ISCC.exe /DAppVersion=1.0.10 installer\AIMS.iss
 ;       （build_x64.ps1 会自动调用，并把 dist 里的产物摆好）
 ; ============================================================================
 
@@ -24,7 +24,7 @@
 #define MyAppShortName "AIMS"
 #define MyAppPublisher "AIMS"
 #ifndef AppVersion
-  #define AppVersion "1.0.4"
+  #define AppVersion "1.0.10"
 #endif
 #ifndef BuildArch
   #define BuildArch "x64"
@@ -143,7 +143,7 @@ Filename: "{app}\{#BackendExe}"; Parameters: "deploy --root ""{app}"" provision 
 Filename: "{app}\{#BackendExe}"; Parameters: "deploy --root ""{app}"" doctor --api-port {code:GetApiPort} --json ""{commonappdata}\AIMS\Logs\post-install-doctor.json"""; Flags: runhidden waituntilterminated; StatusMsg: "正在执行安装后健康检查……"
 ; 4) 启动（以登录用户身份，避免数据文件变成管理员所有）
 Filename: "{app}\{#LauncherExe}"; Description: "立即启动 AIMS"; Flags: nowait postinstall skipifsilent runasoriginaluser
-; 5) 首次安装会随机生成管理员初始密码（不设 admin/admin 之类的默认口令），
+; 5) 首次安装默认创建管理员 admin / admin123（实施人员可用 --admin-password 自定义），
 ;    让用户在完成页直接打开凭据文件抄下密码
 Filename: "{sys}\notepad.exe"; Parameters: """{commonappdata}\AIMS\Config\first-login.txt"""; Description: "查看首次登录凭据（用户名与初始密码，务必记下）"; Flags: postinstall skipifsilent runasoriginaluser skipifdoesntexist
 

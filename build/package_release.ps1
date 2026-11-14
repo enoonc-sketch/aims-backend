@@ -126,6 +126,10 @@ $manifest = [ordered]@{
         signed = ($signedX64 -eq $true)
         x64    = Get-SignatureInfo -Path $installerCopy
     }
+    code_signing = [ordered]@{
+        signed = ($signedX64 -eq $true)
+        x64    = Get-SignatureInfo -Path $installerCopy
+    }
     arm64_installer = if ($Arm64Installer) {
         @{
             file = [System.IO.Path]::GetFileName($Arm64Installer)

@@ -94,21 +94,23 @@ class Settings(BaseSettings):
     JWT_AUDIENCE: str = "aims-api"
 
     # ---- Login throttling ----
-    LOGIN_MAX_FAILURES: int = 5              # per username, inside the window
-    LOGIN_MAX_FAILURES_PER_IP: int = 20      # per client IP, inside the window
+    LOGIN_MAX_FAILURES: int = 5              # per (client IP + username) pair, inside the window
+    LOGIN_MAX_FAILURES_PER_IP: int = 20      # per client IP over all usernames (spraying ceiling)
     LOGIN_LOCKOUT_MINUTES: int = 15
 
     # ---- Bootstrap admin (only used when the users table is empty) ----
     BOOTSTRAP_ADMIN_USERNAME: str = ""
     BOOTSTRAP_ADMIN_PASSWORD: str = ""
-    # Development administrator, created only on an EMPTY users table when no
-    # BOOTSTRAP_ADMIN_* is given. None => automatic: False (AIMS 1.0 phase 1,
-    # report item H-2: the old implicit default silently created
-    # admin/admin123 on every development/EXE instance). Devs who actually
-    # want the convenience account must opt in explicitly with
-    # ALLOW_DEV_ADMIN=true outside production.
-    # Always refused in production regardless of this flag.
+    # Default administrator admin / admin123, created only on an EMPTY users table when no
+    # BOOTSTRAP_ADMIN_* is given, so a fresh desktop/dev instance can always be logged into.
+    # None => automatic: ON outside production (1.0.0 had turned this OFF, which left the
+    # standalone build with no account at all; the owner asked for admin/admin123 as default).
+    # Set ALLOW_DEV_ADMIN=false to opt out. ALWAYS refused in production, whatever this says:
+    # production must inject BOOTSTRAP_ADMIN_* or run `python -m app.cli create-admin`.
     ALLOW_DEV_ADMIN: bool | None = None
+    # 默认账号（admin/admin123）首次登录必须先改密码。只影响“用默认口令新建”的开发管理员；
+    # 自定义口令（BOOTSTRAP_ADMIN_*）建的账号、已有账号都不受影响。
+    DEV_ADMIN_FORCE_PASSWORD_CHANGE: bool = True
     DEV_ADMIN_USERNAME: str = "admin"
     DEV_ADMIN_PASSWORD: str = "admin123"
     # Demo devices/alarms are never seeded in production; opt-in elsewhere.
@@ -197,7 +199,9 @@ class Settings(BaseSettings):
     def dev_admin_allowed(self) -> bool:
         if self.is_production:
             return False
-        return bool(self.ALLOW_DEV_ADMIN)  # None (unset) now means OFF
+        if self.ALLOW_DEV_ADMIN is None:
+            return True  # unset: ON outside production (see ALLOW_DEV_ADMIN above)
+        return bool(self.ALLOW_DEV_ADMIN)
 
     @property
     def cors_origin_list(self) -> list[str]:

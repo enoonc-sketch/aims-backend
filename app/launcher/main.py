@@ -27,6 +27,103 @@ logger = logging.getLogger("aims.launcher")
 
 
 # --------------------------------------------------------------------------- #
+# 启动器偏好（aims_data/launcher.json）：托盘行为 + 显示/隐藏主窗口的热键
+# --------------------------------------------------------------------------- #
+LAUNCHER_PREFS_NAME = "launcher.json"
+DEFAULT_TOGGLE_HOTKEY = "ctrl+alt+a"
+
+
+def load_launcher_prefs(path: Path) -> dict:
+    """读启动器偏好：文件缺失/损坏/值非法时回默认值，绝不因偏好文件坏了而起不来。"""
+    prefs = {"close_to_tray_notified": False, "toggle_hotkey": DEFAULT_TOGGLE_HOTKEY}
+    try:
+        data = json.loads(Path(path).read_text(encoding="utf-8"))
+        if isinstance(data, dict):
+            if isinstance(data.get("close_to_tray_notified"), bool):
+                prefs["close_to_tray_notified"] = data["close_to_tray_notified"]
+            hotkey = data.get("toggle_hotkey")
+            if isinstance(hotkey, str) and win.parse_hotkey(hotkey):
+                prefs["toggle_hotkey"] = hotkey.strip().lower()
+    except Exception:  # noqa: BLE001
+        pass
+    return prefs
+
+
+def save_launcher_prefs(path: Path, prefs: dict) -> bool:
+    try:
+        Path(path).parent.mkdir(parents=True, exist_ok=True)
+        Path(path).write_text(json.dumps(prefs, ensure_ascii=False, indent=2),
+                              encoding="utf-8")
+        return True
+    except Exception:  # noqa: BLE001
+        logger.warning("could not save launcher prefs: %s", path)
+        return False
+
+
+def show_shortcuts_window(app: "App") -> None:
+    """“用户快捷键”小窗口：列出本应用的快捷键，可改显示/隐藏主窗口的热键。
+
+    托盘回调跑在后台线程，窗口在自己的守护线程里跑 mainloop；tkinter
+    不可用时退回消息框（只读列出快捷键和当前热键）。
+    """
+    if getattr(app, "_shortcuts_open", False):
+        return
+    app._shortcuts_open = True
+
+    def _run() -> None:
+        try:
+            import tkinter as tk
+
+            root = tk.Tk()
+            root.title("用户快捷键")
+            root.geometry("440x300")
+            try:
+                root.attributes("-topmost", True)
+            except Exception:  # noqa: BLE001
+                pass
+            font = ("Microsoft YaHei UI", 10)
+            tk.Label(root, text="显示 / 隐藏主窗口", font=("Microsoft YaHei UI", 11, "bold")).pack(
+                anchor="w", padx=16, pady=(14, 4))
+            row = tk.Frame(root)
+            row.pack(fill="x", padx=16)
+            entry = tk.Entry(row, font=font, width=22)
+            entry.insert(0, str(app.prefs.get("toggle_hotkey") or DEFAULT_TOGGLE_HOTKEY))
+            entry.pack(side="left")
+            status = tk.Label(root, text="", font=("Microsoft YaHei UI", 9), fg="#666")
+            status.pack(anchor="w", padx=16, pady=(4, 0))
+
+            def _save() -> None:
+                text = entry.get().strip()
+                if app._apply_hotkey(text):
+                    status.config(text=f"已保存：{text.lower()}，按一次显示/隐藏主窗口", fg="#16a34a")
+                else:
+                    status.config(text="格式不对，例如 ctrl+alt+a（要带 ctrl/alt/shift/win 其一）", fg="#dc2626")
+
+            tk.Button(row, text="保存", font=font, command=_save).pack(side="left", padx=(8, 0))
+            tk.Label(root, text="其它快捷键", font=("Microsoft YaHei UI", 11, "bold")).pack(
+                anchor="w", padx=16, pady=(14, 4))
+            tk.Label(root, text="回车：在登录、搜索、对话、改密码输入框中确认",
+                     font=font, justify="left").pack(anchor="w", padx=16)
+            tk.Label(root, text="托盘：右键托盘图标打开菜单，可打开主界面、备份、诊断、退出",
+                     font=font, justify="left", wraplength=400).pack(anchor="w", padx=16, pady=(4, 0))
+            tk.Button(root, text="关闭", font=font, command=root.destroy).pack(pady=16)
+            root.mainloop()
+        except Exception:  # noqa: BLE001
+            logger.exception("shortcuts window failed")
+            try:
+                win.message_box("用户快捷键",
+                                f"显示 / 隐藏主窗口：{app.prefs.get('toggle_hotkey') or DEFAULT_TOGGLE_HOTKEY}\n"
+                                "回车：在登录、搜索、对话、改密码输入框中确认\n"
+                                "托盘：右键托盘图标打开菜单")
+            except Exception:  # noqa: BLE001
+                pass
+        finally:
+            app._shortcuts_open = False
+
+    threading.Thread(target=_run, name="aims-shortcuts-window", daemon=True).start()
+
+
+# --------------------------------------------------------------------------- #
 def _setup_logging(root: Path) -> Path:
     log_dir = root / "aims_data" / "logs"
     log_path = log_dir / "launcher.log"
@@ -108,6 +205,15 @@ class App:
         self.supervisor = Supervisor(root, progress=self._progress)
         self._exit = threading.Event()
         self.log_path = _setup_logging(root)
+        # 原生桌面窗口（pywebview）：点 × 只是藏起来，窗口对象留着以后再显示。
+        self.window = None
+        self._window_visible = False
+        self._quitting = False
+        self._shortcuts_open = False
+        self._hotkey_listener = None
+        self._ui_state: dict | None = None      # 托盘菜单显示的登录状态；None = 取不到
+        self.prefs_path = root / "aims_data" / LAUNCHER_PREFS_NAME
+        self.prefs = load_launcher_prefs(self.prefs_path)
 
     def _progress(self, message: str) -> None:
         logger.info(message.strip())
@@ -130,12 +236,17 @@ class App:
         self.splash.close()
         # 后端由本次启动拉起时，交给看门狗盯着：崩溃能在日志里看见，并有限次自愈。
         self._start_backend_watchdog()
+        self._start_hotkey_listener()
+        self._start_ui_state_poller()
         # 桌面窗口模式（计划书 3.1-A）：由 run() 里的 pywebview 原生窗口负责打开界面，
         # 这里就不再先用 Edge --app 弹一个窗口（避免双窗口）。
         if self.open_ui and not self._use_desktop_window():
             url = self.supervisor.ui_url()
-            how = win.open_app_window(url)
+            how, proc = win.open_app_window_proc(url)
             logger.info("UI opened (%s): %s", how, url)
+            if proc is not None:
+                # 浏览器窗口模式：窗口关了应用本来就留在托盘；第一次关时提醒一声。
+                self._watch_browser_window(proc)
         return True
 
     def _use_desktop_window(self) -> bool:
@@ -155,23 +266,182 @@ class App:
             text += f"\n\n--- 最近日志 ---\n{detail[-1800:]}"
         win.message_box(title, text, error=True)
 
+    # ------------------------------------------------------- 界面登录状态（托盘显示）
+    def _fetch_ui_state(self) -> dict | None:
+        """向后端问一次“界面现在谁登录着”。取不到（后端不是本启动器拉起的、刚重启…）返回 None。"""
+        import json
+        import urllib.request
+
+        req = urllib.request.Request(
+            f"http://127.0.0.1:{self.supervisor.api_port}/api/v1/auth/ui-state",
+            headers={"X-AIMS-Launcher": self.supervisor.launcher_token})
+        try:
+            with urllib.request.urlopen(req, timeout=1.5) as resp:  # noqa: S310 - 本机回环
+                data = json.loads(resp.read().decode("utf-8"))
+            return data if isinstance(data, dict) else None
+        except Exception:  # noqa: BLE001
+            return None
+
+    def _refresh_ui_state(self) -> None:
+        state = self._fetch_ui_state()
+        changed = state != self._ui_state
+        self._ui_state = state
+        if changed and self.icon is not None:
+            try:
+                self.icon.title = self._tray_title()
+                self.icon.update_menu()
+            except Exception:  # noqa: BLE001
+                pass
+
+    def _start_ui_state_poller(self) -> None:
+        def loop() -> None:
+            while not self._exit.wait(5.0):
+                self._refresh_ui_state()
+
+        self._refresh_ui_state()
+        threading.Thread(target=loop, name="aims-ui-state", daemon=True).start()
+
+    def _tray_title(self) -> str:
+        st = self._ui_state
+        if st and st.get("logged_in"):
+            return f"AIMS 设备智能运维系统 — 已登录：{st.get('username', '')}"
+        return "AIMS 设备智能运维系统 — 未登录"
+
+    def _login_status_text(self, _item=None) -> str:
+        st = self._ui_state
+        if st is None:
+            return "登录状态：未获取"
+        return "登录状态：已登录" if st.get("logged_in") else "登录状态：未登录"
+
+    def _login_user_text(self, _item=None) -> str:
+        st = self._ui_state
+        if not st or not st.get("logged_in"):
+            return "登录人：—"
+        name = st.get("username", "")
+        full = st.get("full_name") or ""
+        return f"登录人：{name}" + (f"（{full}）" if full and full != name else "")
+
+    def _login_permission_text(self, _item=None) -> str:
+        st = self._ui_state
+        if not st or not st.get("logged_in"):
+            return "使用权限：—"
+        return f"使用权限：{st.get('permission') or '—'}"
+
     # ------------------------------------------------------------------ 菜单
     def menu_items(self):
-        import pystray
+        from app.launcher.tray_win32 import Menu, MenuItem as Item
 
-        Item = pystray.MenuItem
-        yield Item("打开 AIMS 主界面", lambda: win.open_app_window(self.supervisor.ui_url()), default=True)
+        # 登录信息（只读，每次打开菜单取最近一次上报）
+        yield Item(self._login_status_text, None, enabled=False)
+        yield Item(self._login_user_text, None, enabled=False)
+        yield Item(self._login_permission_text, None, enabled=False)
+        yield Menu.SEPARATOR
+        yield Item("打开 AIMS 主界面", self._menu_open_ui, default=True)
+        yield Item("设置", self._menu_open_settings)
+        yield Item("用户快捷键", self._menu_shortcuts)
         yield Item("立即备份数据库", self._menu_backup)
         yield Item("打开数据目录", lambda: self._open_path(self.supervisor.layout.data_dir))
         yield Item("打开日志目录", lambda: self._open_path(self.supervisor.layout.logs_dir))
         yield Item("生成诊断报告", self._menu_doctor)
         yield Item("重启服务", self._menu_restart)
         yield Item("开机自动启动", self._menu_autostart, checked=lambda _i: win.autostart_enabled())
-        yield pystray.Menu.SEPARATOR
+        yield Menu.SEPARATOR
         yield Item(f"版本 {_version()}", lambda: win.message_box(
             PRODUCT_NAME, f"版本：{_version()}\n安装目录：{self.root}\n数据目录：{self.supervisor.layout.data_dir}\n"
                         f"界面地址：{self.supervisor.ui_url()}\n日志：{self.log_path}"))
-        yield Item("退出", self._menu_quit)
+        yield Item("退出程序", self._menu_quit)
+
+    # ------------------------------------------------------- 主窗口（显示/隐藏）
+    def _settings_url(self) -> str:
+        return self.supervisor.ui_url() + "#sys/settings"
+
+    def _set_window(self, window) -> None:
+        self.window = window
+        self._window_visible = True
+
+    def _on_close_to_tray(self) -> None:
+        """点 × 只是把窗口藏到托盘：应用继续跑；第一次提醒用户一声。"""
+        if self._quitting:
+            return
+        self._window_visible = False
+        if not self.prefs.get("close_to_tray_notified"):
+            self.prefs["close_to_tray_notified"] = True
+            save_launcher_prefs(self.prefs_path, self.prefs)
+            if self.icon is not None:
+                win.notify(self.icon, PRODUCT_NAME,
+                           "AIMS 仍在后台运行：点托盘图标可重新打开主界面，选“退出程序”才真正退出")
+        logger.info("main window closed to tray")
+
+    def _menu_open_ui(self) -> None:
+        if self.window is not None and win.show_desktop_window(self.window):
+            self._window_visible = True
+            return
+        win.open_app_window(self.supervisor.ui_url())
+
+    def _menu_open_settings(self) -> None:
+        """托盘“设置”：直接打开系统设置 → 设置页（已有原生窗口就复用它）。"""
+        url = self._settings_url()
+        if self.window is not None:
+            win.show_desktop_window(self.window)
+            self._window_visible = True
+            if win.load_desktop_url(self.window, url):
+                return
+        win.open_app_window(url)
+
+    def _menu_shortcuts(self) -> None:
+        show_shortcuts_window(self)
+
+    def _toggle_main_window(self) -> None:
+        """全局热键：显示/隐藏主窗口。没有原生窗口时（浏览器模式）就打开界面。"""
+        if self.window is not None:
+            if self._window_visible:
+                if win.hide_desktop_window(self.window):
+                    self._window_visible = False
+            elif win.show_desktop_window(self.window):
+                self._window_visible = True
+            return
+        win.open_app_window(self.supervisor.ui_url())
+
+    def _watch_browser_window(self, proc) -> None:
+        """浏览器窗口模式：盯着浏览器进程，窗口关了（且不是启动后几秒内的
+        “交接退出”）就按“最小化到托盘”提醒一次。"""
+        def _wait() -> None:
+            started = time.time()
+            try:
+                proc.wait()
+            except Exception:  # noqa: BLE001
+                return
+            if self._exit.is_set():
+                return
+            if time.time() - started < 5.0:
+                return  # 新进程立刻退出 = 把请求交给已在跑的浏览器，不是用户关窗口
+            self._on_close_to_tray()
+
+        threading.Thread(target=_wait, name="aims-browser-window-watch",
+                         daemon=True).start()
+
+    def _start_hotkey_listener(self) -> None:
+        if self._hotkey_listener is not None:
+            return
+        parsed = win.parse_hotkey(str(self.prefs.get("toggle_hotkey") or ""))
+        if parsed is None:
+            return
+        listener = win.HotkeyListener(parsed, self._toggle_main_window)
+        if listener.start():
+            self._hotkey_listener = listener
+
+    def _apply_hotkey(self, text: str) -> bool:
+        """快捷键窗口保存后调用：校验、持久化、重新注册。返回是否成功。"""
+        parsed = win.parse_hotkey(text)
+        if parsed is None:
+            return False
+        if self._hotkey_listener is not None:
+            self._hotkey_listener.stop()
+            self._hotkey_listener = None
+        self.prefs["toggle_hotkey"] = text.strip().lower()
+        save_launcher_prefs(self.prefs_path, self.prefs)
+        self._start_hotkey_listener()
+        return True
 
     def _open_path(self, path: Path) -> None:
         try:
@@ -220,7 +490,13 @@ class App:
         self.supervisor = Supervisor(self.root, progress=self._progress)
         ok = self.start()
         if ok:
-            win.open_app_window(self.supervisor.ui_url())
+            # 原生窗口还在就复用它（重新加载一次连回新起的后端），没有才开浏览器窗口。
+            if self.window is not None:
+                win.show_desktop_window(self.window)
+                self._window_visible = True
+                win.load_desktop_url(self.window, self.supervisor.ui_url())
+            else:
+                win.open_app_window(self.supervisor.ui_url())
         else:
             win.message_box("重启失败", "请查看日志或生成诊断报告。", error=True)
 
@@ -230,7 +506,21 @@ class App:
             win.message_box("设置失败", "无法写入开机启动项（可能被安全软件拦截）。", error=True)
 
     def _menu_quit(self) -> None:
+        # 先立“正在退出”旗：销毁窗口时若触发 closing 事件，放行，不再当成“最小化到托盘”。
+        self._quitting = True
         self._exit.set()
+        if self._hotkey_listener is not None:
+            try:
+                self._hotkey_listener.stop()
+            except Exception:  # noqa: BLE001
+                pass
+            self._hotkey_listener = None
+        if self.window is not None:
+            try:
+                win.destroy_desktop_window(self.window)
+            except Exception:  # noqa: BLE001
+                pass
+            self.window = None
         if self.icon is not None:
             try:
                 self.icon.stop()
@@ -323,13 +613,13 @@ class App:
             if getattr(sys, "frozen", False) and "--quiet" not in sys.argv:
                 pass
             return 3
-        # AIMS Desktop 原生窗口（pywebview/WebView2）：窗口即应用，关闭窗口退出 AIMS。
+        # AIMS Desktop 原生窗口（pywebview/WebView2）：点 × 只是藏到托盘，应用不退出；
         # 托盘转后台线程继续提供备份/诊断/退出菜单；WebView2 缺失时走下面传统路径。
         if self._use_desktop_window() and not self._exit.is_set():
             return self._run_desktop_window()
         if not self.want_tray or not win.tray_available():
             if self.want_tray:
-                logger.warning("pystray/Pillow unavailable — running without tray")
+                logger.warning("tray unavailable on this platform — running without tray")
             return self._run_headless()
         icon_path = self.root / "assets" / "aims.ico"
         self.icon = win.build_tray_icon(icon_path)
@@ -344,7 +634,13 @@ class App:
         return 0
 
     def _run_desktop_window(self) -> int:
-        """原生窗口模式：主线程跑 WebView2 消息循环，托盘在后台线程。"""
+        """原生窗口模式：主线程跑 WebView2 消息循环，托盘在后台线程。
+
+        点 × 不再退出：窗口藏到托盘，应用继续跑；只有托盘「退出程序」
+        才会真正下线（它先销毁窗口，webview.start() 随之返回）。
+        托盘起不来时不启用“最小化到托盘”（否则窗口藏了就找不回来），
+        点 × 仍按老行为退出。
+        """
         logger.info("desktop window mode (pywebview/WebView2)")
         icon_path = self.root / "assets" / "aims.ico"
         self.icon = win.build_tray_icon(icon_path)
@@ -352,10 +648,15 @@ class App:
         if self.icon is not None:
             tray_detached = win.run_tray_detached(self.icon, list(self.menu_items()))
             if tray_detached:
-                win.notify(self.icon, PRODUCT_NAME, "AIMS 已在运行，关闭窗口或从托盘退出")
+                win.notify(self.icon, PRODUCT_NAME, "AIMS 已在运行，关闭窗口后仍在托盘后台运行")
         try:
-            win.run_desktop_window(self.supervisor.ui_url(), title=f"{PRODUCT_NAME} {_version()}")
-            # 窗口被用户关闭 —— 与双击退出等价：整组服务安全下线
+            win.run_desktop_window(
+                self.supervisor.ui_url(), title=f"{PRODUCT_NAME} {_version()}",
+                on_close_to_tray=self._on_close_to_tray if tray_detached else None,
+                on_window=self._set_window,
+                is_quitting=lambda: self._quitting,
+            )
+            # 只有窗口被真正销毁（退出程序）才会走到这里。
             return 0
         except Exception as exc:  # noqa: BLE001
             # WebView2 Runtime 缺失等环境问题：回退到浏览器窗口，功能不缩水

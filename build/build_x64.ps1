@@ -44,7 +44,7 @@ Write-Host "Python：$Python"
 $req = Join-Path $script:RepoRoot 'requirements-exe.txt'
 Invoke-Checked -Exe $Python -Arguments @('-m', 'pip', 'install', '--upgrade', 'pip', 'wheel', 'setuptools') -What 'pip 升级'
 Invoke-Checked -Exe $Python -Arguments @('-m', 'pip', 'install', '-r', $req) -What '安装后端依赖'
-Invoke-Checked -Exe $Python -Arguments @('-m', 'pip', 'install', 'pyinstaller>=6.6', 'pystray>=0.19.5', 'pillow>=10.3.0') -What '安装打包工具'
+Invoke-Checked -Exe $Python -Arguments @('-m', 'pip', 'install', 'pyinstaller>=6.6') -What '安装打包工具'
 if (-not $SkipAi) {
     # llama-cpp-python 只在有匹配轮子时安装；失败不阻断（AI 会自动降级并在自检里报告）
     & $Python -m pip install --only-binary=:all: --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cpu 'llama-cpp-python==0.3.2'

@@ -61,10 +61,12 @@ def has_any_user(db: Session) -> bool:
     return db.scalar(select(User.id).limit(1)) is not None
 
 
-def create_admin_user(db: Session, username: str, password: str, *, audit_action: str = "cli.admin_created") -> User:
+def create_admin_user(db: Session, username: str, password: str, *, audit_action: str = "cli.admin_created",
+                      allow_dev_default: bool = False) -> User:
     """Create a superuser (no commit). Password must pass the policy;
-    violations raise ValueError with a user-facing message."""
-    from app.core.security import hash_password, validate_password_strength
+    violations raise ValueError with a user-facing message.
+    `allow_dev_default` (CLI only) exempts the development administrator pair (admin/admin123)."""
+    from app.core.security import hash_password, is_dev_default_credential, validate_password_strength
     from app.db.init_db import _seed_permissions, _seed_roles
 
     username = (username or "").strip()
@@ -72,11 +74,12 @@ def create_admin_user(db: Session, username: str, password: str, *, audit_action
         raise ValueError("用户名至少 3 个字符")
     if db.scalar(select(User).where(User.username == username)) is not None:
         raise ValueError("用户已存在")
-    try:
-        validate_password_strength(password, username)
-    except ValueError as e:
-        # 0.5.0 raises; the secure package returned a problem list.
-        raise ValueError(f"密码不符合策略: {e}") from e
+    if not (allow_dev_default and is_dev_default_credential(username, password)):
+        try:
+            validate_password_strength(password, username)
+        except ValueError as e:
+            # 0.5.0 raises; the secure package returned a problem list.
+            raise ValueError(f"密码不符合策略: {e}") from e
     _seed_roles(db)
     _seed_permissions(db)
     user = User(username=username, hashed_password=hash_password(password), full_name="Administrator",

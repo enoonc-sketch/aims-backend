@@ -3,17 +3,23 @@ from typing import Optional
 
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from sqlalchemy import select
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_superuser, get_current_user, get_db
 from app.api.pagination import LimitQuery, SkipQuery
 from app.core.security import hash_password
-from app.models.system import AuditLog, Role, SystemSetting, User
+from app.models.system import AuditLog, Permission, Role, RolePermission, SystemSetting, User, UserRole
 from app.services.audit import record_audit
 from app.services.auth_sessions import revoke_all_for_user
+from app.services import access
 from app.schemas.auth import (
+    PermissionOut,
+    RoleCreate,
+    RolePermissionsOut,
+    RolePermissionsUpdate,
+    UserRolesUpdate,
     RoleOut,
     SystemSettingOut,
     SystemSettingUpdate,
@@ -34,7 +40,29 @@ def list_users(
     skip: int = SkipQuery,
     limit: int = LimitQuery(100),
 ):
-    return db.scalars(select(User).offset(skip).limit(limit)).all()
+    users = db.scalars(select(User).order_by(User.id).offset(skip).limit(limit)).all()
+    roles = access.role_codes_for(db, [u.id for u in users])
+    out = []
+    for u in users:
+        item = UserOut.model_validate(u)
+        item.roles = roles.get(u.id, [])
+        out.append(item)
+    return out
+
+
+def _roles_by_code(db: Session, codes: list[str]) -> list[Role]:
+    codes = list(dict.fromkeys(c.strip() for c in codes if c and c.strip()))
+    rows = db.scalars(select(Role).where(Role.code.in_(codes))).all() if codes else []
+    missing = sorted(set(codes) - {r.code for r in rows})
+    if missing:
+        raise HTTPException(status_code=422, detail=f"Unknown role: {', '.join(missing)}")
+    return list(rows)
+
+
+def _set_user_roles(db: Session, user: User, roles: list[Role]) -> None:
+    db.query(UserRole).filter(UserRole.user_id == user.id).delete()
+    for r in roles:
+        db.add(UserRole(user_id=user.id, role_id=r.id))
 
 
 @router.post("/users", response_model=UserOut, status_code=201)
@@ -46,21 +74,28 @@ def create_user(
 ):
     if db.scalar(select(User).where(User.username == payload.username)):
         raise HTTPException(status_code=409, detail="username already exists")
+    roles = _roles_by_code(db, payload.roles)
     user = User(
         username=payload.username,
         hashed_password=hash_password(payload.password),
         full_name=payload.full_name,
         email=payload.email,
         is_superuser=payload.is_superuser,
+        # 管理员代建的账号：建账号的人知道口令，账号本人首次登录必须先改成自己的口令。
+        must_change_password=True,
     )
     db.add(user)
     db.flush()
+    _set_user_roles(db, user, roles)
     record_audit(db, user_id=actor.id, action="USER_CREATE", entity="users", entity_id=user.id,
-                 detail={"username": user.username, "is_superuser": user.is_superuser},
+                 detail={"username": user.username, "is_superuser": user.is_superuser,
+                         "roles": [r.code for r in roles]},
                  ip_address=request.client.host if request.client else None)
     db.commit()
     db.refresh(user)
-    return user
+    out = UserOut.model_validate(user)
+    out.roles = [r.code for r in roles]
+    return out
 
 
 @router.patch("/users/{user_id}", response_model=UserOut)
@@ -82,6 +117,10 @@ def update_user(
         data.pop("password", None)
     for k, v in data.items():
         setattr(user, k, v)
+    # 别人替他重置了密码：该账号下次登录必须先改成自己的口令（自己在管理界面改自己的
+    # 密码不触发——新口令是本人当场设的）。本人走 /auth/change-password 改密时会清零。
+    if password_reset and actor.id != user.id:
+        user.must_change_password = True
     # Deactivating an account or resetting its password ends all of its sessions.
     sessions_revoked = 0
     if password_reset or data.get("is_active") is False:
@@ -95,10 +134,156 @@ def update_user(
     return user
 
 
+@router.put("/users/{user_id}/roles", response_model=UserOut)
+def set_user_roles(
+    user_id: int,
+    payload: UserRolesUpdate,
+    request: Request,
+    db: Session = Depends(get_db),
+    actor: User = Depends(get_current_superuser),
+):
+    """给账号分配角色（整体替换）。"""
+    user = db.get(User, user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    roles = _roles_by_code(db, payload.roles)
+    _set_user_roles(db, user, roles)
+    record_audit(db, user_id=actor.id, action="USER_ROLES_SET", entity="users", entity_id=user.id,
+                 detail={"roles": [r.code for r in roles]},
+                 ip_address=request.client.host if request.client else None)
+    db.commit()
+    db.refresh(user)
+    out = UserOut.model_validate(user)
+    out.roles = [r.code for r in roles]
+    return out
+
+
+@router.delete("/users/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_user(
+    user_id: int,
+    request: Request,
+    db: Session = Depends(get_db),
+    actor: User = Depends(get_current_superuser),
+):
+    """删除账号。不能删自己，也不能删掉最后一个超级管理员（否则无人可管）。"""
+    user = db.get(User, user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    if user.id == actor.id:
+        raise HTTPException(status_code=400, detail="Cannot delete your own account")
+    if user.is_superuser:
+        supers = db.scalar(select(func.count()).select_from(User).where(User.is_superuser.is_(True)))
+        if (supers or 0) <= 1:
+            raise HTTPException(status_code=400, detail="Cannot delete the last superuser")
+    revoke_all_for_user(db, user.id, datetime.now(timezone.utc))
+    db.query(UserRole).filter(UserRole.user_id == user.id).delete()
+    record_audit(db, user_id=actor.id, action="USER_DELETE", entity="users", entity_id=user.id,
+                 detail={"username": user.username},
+                 ip_address=request.client.host if request.client else None)
+    db.delete(user)
+    db.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
 # ---------- Roles ----------
 @router.get("/roles", response_model=list[RoleOut])
 def list_roles(db: Session = Depends(get_db), _: User = Depends(get_current_user)):
     return db.scalars(select(Role)).all()
+
+
+@router.get("/permissions", response_model=list[PermissionOut])
+def list_permissions(db: Session = Depends(get_db), _: User = Depends(get_current_superuser)):
+    return db.scalars(select(Permission).order_by(Permission.module, Permission.code)).all()
+
+
+@router.get("/role-permissions", response_model=list[RolePermissionsOut])
+def list_role_permissions(db: Session = Depends(get_db), _: User = Depends(get_current_superuser)):
+    roles = db.scalars(select(Role).order_by(Role.id)).all()
+    pairs = db.execute(select(RolePermission.role_id, Permission.code)
+                       .join(Permission, Permission.id == RolePermission.permission_id)).all()
+    by_role: dict[int, list[str]] = {}
+    for rid, code in pairs:
+        by_role.setdefault(rid, []).append(code)
+    return [RolePermissionsOut(id=r.id, code=r.code, name=r.name, description=r.description,
+                               permissions=sorted(by_role.get(r.id, []))) for r in roles]
+
+
+@router.put("/roles/{role_id}/permissions", response_model=RolePermissionsOut)
+def set_role_permissions(
+    role_id: int,
+    payload: RolePermissionsUpdate,
+    request: Request,
+    db: Session = Depends(get_db),
+    actor: User = Depends(get_current_superuser),
+):
+    """整体替换某个角色的权限集合。admin 角色恒为全部权限，不可改。"""
+    role = db.get(Role, role_id)
+    if not role:
+        raise HTTPException(status_code=404, detail="Role not found")
+    if role.code == "admin":
+        raise HTTPException(status_code=400, detail="The admin role always has every permission")
+    codes = list(dict.fromkeys(payload.permissions))
+    perms = db.scalars(select(Permission).where(Permission.code.in_(codes))).all() if codes else []
+    missing = sorted(set(codes) - {p.code for p in perms})
+    if missing:
+        raise HTTPException(status_code=422, detail=f"Unknown permission: {', '.join(missing)}")
+    db.query(RolePermission).filter(RolePermission.role_id == role.id).delete()
+    for p in perms:
+        db.add(RolePermission(role_id=role.id, permission_id=p.id))
+    record_audit(db, user_id=actor.id, action="ROLE_PERMISSIONS_SET", entity="roles", entity_id=role.id,
+                 detail={"role": role.code, "permissions": sorted(codes)},
+                 ip_address=request.client.host if request.client else None)
+    db.commit()
+    return RolePermissionsOut(id=role.id, code=role.code, name=role.name, description=role.description,
+                              permissions=sorted(codes))
+
+
+@router.post("/roles", response_model=RoleOut, status_code=201)
+def create_role(
+    payload: RoleCreate,
+    request: Request,
+    db: Session = Depends(get_db),
+    actor: User = Depends(get_current_superuser),
+):
+    """新建自定义角色。code 只允许小写字母、数字、下划线；新建角色初始没有任何权限，
+    建完后在权限设置里勾选。"""
+    if db.scalar(select(Role).where(Role.code == payload.code)):
+        raise HTTPException(status_code=409, detail="role already exists")
+    role = Role(code=payload.code, name=payload.name, description=payload.description)
+    db.add(role)
+    db.flush()
+    record_audit(db, user_id=actor.id, action="ROLE_CREATE", entity="roles", entity_id=role.id,
+                 detail={"code": role.code, "name": role.name},
+                 ip_address=request.client.host if request.client else None)
+    db.commit()
+    db.refresh(role)
+    return role
+
+
+@router.delete("/roles/{role_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_role(
+    role_id: int,
+    request: Request,
+    db: Session = Depends(get_db),
+    actor: User = Depends(get_current_superuser),
+):
+    """删除自定义角色。内置 admin 角色不可删；还有账号在用的角色不可删（先把账号移走）。"""
+    role = db.get(Role, role_id)
+    if not role:
+        raise HTTPException(status_code=404, detail="Role not found")
+    if role.code == "admin":
+        raise HTTPException(status_code=400, detail="The admin role cannot be deleted")
+    assigned = db.scalar(select(func.count()).select_from(UserRole).where(UserRole.role_id == role.id))
+    if assigned:
+        raise HTTPException(status_code=400,
+                            detail=f"Role is assigned to {assigned} user(s); reassign them first")
+    db.query(RolePermission).filter(RolePermission.role_id == role.id).delete()
+    record_audit(db, user_id=actor.id, action="ROLE_DELETE", entity="roles", entity_id=role.id,
+                 detail={"code": role.code},
+                 ip_address=request.client.host if request.client else None)
+    db.delete(role)
+    db.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 # ---------- Settings ----------
